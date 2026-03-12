@@ -203,7 +203,12 @@ import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
-import { getAppModelOptions, resolveAppModelSelection, useAppSettings } from "../appSettings";
+import {
+  getAppModelOptions,
+  normalizeCustomModelSlugs,
+  resolveAppModelSelection,
+  useAppSettings,
+} from "../appSettings";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -260,6 +265,7 @@ const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
+const EMPTY_STRINGS: string[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
@@ -863,6 +869,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     markThreadVisited,
   ]);
 
+  const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const sessionProvider = activeThread?.session?.provider ?? null;
   const selectedProviderByThreadId = composerDraft.provider;
   const hasThreadStarted = Boolean(
@@ -879,7 +886,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProvider,
     activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider),
   );
-  const customModelsForSelectedProvider = settings.customCodexModels;
+  const codexConfigModels = serverConfigQuery.data?.codexConfigModels ?? EMPTY_STRINGS;
+  const customModelsForSelectedProvider = useMemo(
+    () => mergeCodexCustomModels(settings.customCodexModels, codexConfigModels),
+    [codexConfigModels, settings.customCodexModels],
+  );
   const selectedModel = useMemo(() => {
     const draftModel = composerDraft.model;
     if (!draftModel) {
@@ -907,20 +918,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : undefined;
   }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
   const providerOptionsForDispatch = useMemo(() => {
-    if (!settings.codexBinaryPath && !settings.codexHomePath) {
+    if (!settings.codexBinaryPath && !settings.codexHomePath && !settings.codexProfile) {
       return undefined;
     }
     return {
       codex: {
         ...(settings.codexBinaryPath ? { binaryPath: settings.codexBinaryPath } : {}),
         ...(settings.codexHomePath ? { homePath: settings.codexHomePath } : {}),
+        ...(settings.codexProfile ? { profile: settings.codexProfile } : {}),
       },
     };
-  }, [settings.codexBinaryPath, settings.codexHomePath]);
+  }, [settings.codexBinaryPath, settings.codexHomePath, settings.codexProfile]);
   const selectedModelForPicker = selectedModel;
   const modelOptionsByProvider = useMemo(
-    () => getCustomModelOptionsByProvider(settings),
-    [settings],
+    () =>
+      getCustomModelOptionsByProvider({
+        customCodexModels: customModelsForSelectedProvider,
+      }),
+    [customModelsForSelectedProvider],
   );
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
     const currentOptions = modelOptionsByProvider[selectedProvider];
@@ -1268,7 +1283,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
-  const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
       cwd: gitCwd,
@@ -3231,7 +3245,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerDraftProvider(activeThread.id, provider);
       setComposerDraftModel(
         activeThread.id,
-        resolveAppModelSelection(provider, settings.customCodexModels, model),
+        resolveAppModelSelection(provider, customModelsForSelectedProvider, model),
       );
       scheduleComposerFocus();
     },
@@ -3241,7 +3255,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scheduleComposerFocus,
       setComposerDraftModel,
       setComposerDraftProvider,
-      settings.customCodexModels,
+      customModelsForSelectedProvider,
     ],
   );
   const onEffortSelect = useCallback(
@@ -5664,6 +5678,13 @@ function getCustomModelOptionsByProvider(settings: {
   return {
     codex: getAppModelOptions("codex", settings.customCodexModels),
   };
+}
+
+function mergeCodexCustomModels(
+  manualModels: readonly string[],
+  configModels: readonly string[],
+): ReadonlyArray<string> {
+  return normalizeCustomModelSlugs([...manualModels, ...configModels], "codex");
 }
 
 const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {

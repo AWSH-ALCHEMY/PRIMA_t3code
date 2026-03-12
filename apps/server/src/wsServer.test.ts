@@ -830,9 +830,70 @@ describe("WebSocket Server", () => {
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
       providers: defaultProviderStatuses,
+      codexConfigModels: expect.any(Array),
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
+  });
+
+  it("loads codex models from model_catalog_json entries", async () => {
+    const stateDir = makeTempDir("t3code-state-get-config-catalog-");
+    const keybindingsPath = path.join(stateDir, "keybindings.json");
+    fs.writeFileSync(keybindingsPath, "[]", "utf8");
+
+    const codexHome = makeTempDir("t3code-codex-home-");
+    fs.writeFileSync(
+      path.join(codexHome, "config.toml"),
+      [
+        'model = "gpt-5.3-codex"',
+        "",
+        "[model_providers.proxy_gateway]",
+        'model_catalog_json = "models_cache.proxy.generated.json"',
+        "",
+        "[profiles.crofai]",
+        'model = "kimi-k2.5"',
+      ].join("\n"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(codexHome, "models_cache.proxy.generated.json"),
+      JSON.stringify({
+        models: [
+          { slug: "gpt-5-logging" },
+          { slug: "glm-5" },
+          { slug: "gpt-5-logging" },
+          { slug: "" },
+          { notSlug: "ignored" },
+        ],
+      }),
+      "utf8",
+    );
+
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+
+    try {
+      server = await createTestServer({ cwd: "/my/workspace", stateDir });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const [ws] = await connectAndAwaitWelcome(port);
+      connections.push(ws);
+
+      const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
+      expect(response.error).toBeUndefined();
+      expect(response.result).toEqual(
+        expect.objectContaining({
+          codexConfigModels: ["gpt-5.3-codex", "kimi-k2.5", "gpt-5-logging", "glm-5"],
+        }),
+      );
+    } finally {
+      if (previousCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = previousCodexHome;
+      }
+    }
   });
 
   it("bootstraps default keybindings file when missing", async () => {
@@ -855,6 +916,7 @@ describe("WebSocket Server", () => {
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
       providers: defaultProviderStatuses,
+      codexConfigModels: expect.any(Array),
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -890,6 +952,7 @@ describe("WebSocket Server", () => {
         },
       ],
       providers: defaultProviderStatuses,
+      codexConfigModels: expect.any(Array),
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -924,6 +987,7 @@ describe("WebSocket Server", () => {
       keybindings: ResolvedKeybindingsConfig;
       issues: Array<{ kind: string; index?: number; message: string }>;
       providers: ReadonlyArray<ServerProviderStatus>;
+      codexConfigModels: ReadonlyArray<string>;
       availableEditors: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");
@@ -944,6 +1008,7 @@ describe("WebSocket Server", () => {
     expect(result.keybindings.some((entry) => entry.command === "terminal.toggle")).toBe(true);
     expect(result.keybindings.some((entry) => entry.command === "terminal.new")).toBe(true);
     expect(result.providers).toEqual(defaultProviderStatuses);
+    expect(Array.isArray(result.codexConfigModels)).toBe(true);
     expectAvailableEditors(result.availableEditors);
   });
 
@@ -1037,6 +1102,7 @@ describe("WebSocket Server", () => {
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
       providers: defaultProviderStatuses,
+      codexConfigModels: expect.any(Array),
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -1084,6 +1150,7 @@ describe("WebSocket Server", () => {
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
       providers: defaultProviderStatuses,
+      codexConfigModels: expect.any(Array),
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors(

@@ -51,6 +51,7 @@ export const ServerConfig = Schema.Struct({
   keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,
   providers: ServerProviderStatuses,
+  codexConfigModels: Schema.Array(TrimmedNonEmptyString),
   availableEditors: Schema.Array(EditorId),
 });
 export type ServerConfig = typeof ServerConfig.Type;

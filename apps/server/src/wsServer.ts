@@ -7,6 +7,7 @@
  * @module Server
  */
 import http from "node:http";
+import OS from "node:os";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
@@ -157,6 +158,113 @@ function toPosixRelativePath(input: string): string {
   return input.replaceAll("\\", "/");
 }
 
+interface ParsedCodexConfig {
+  readonly models: ReadonlyArray<string>;
+  readonly modelCatalogPaths: ReadonlyArray<string>;
+}
+
+function addUniqueString(bucket: string[], seen: Set<string>, value: string): void {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || seen.has(trimmed)) {
+    return;
+  }
+  seen.add(trimmed);
+  bucket.push(trimmed);
+}
+
+function parseCodexConfig(content: string): ParsedCodexConfig {
+  const models: string[] = [];
+  const modelCatalogPaths: string[] = [];
+  const seenModels = new Set<string>();
+  const seenCatalogPaths = new Set<string>();
+  let section: "top" | "profile" | "provider" | "other" = "top";
+
+  for (const rawLine of content.split("\n")) {
+    const withoutComment = rawLine.split("#")[0]?.trim() ?? "";
+    if (!withoutComment) {
+      continue;
+    }
+
+    if (withoutComment.startsWith("[") && withoutComment.endsWith("]")) {
+      const sectionName = withoutComment.slice(1, -1).trim();
+      if (sectionName.length === 0) {
+        section = "other";
+        continue;
+      }
+      section = sectionName.startsWith("profiles.")
+        ? "profile"
+        : sectionName.startsWith("model_providers.")
+          ? "provider"
+          : "other";
+      continue;
+    }
+
+    const modelMatch = withoutComment.match(/^model\s*=\s*["']([^"']+)["']$/);
+    if ((section === "top" || section === "profile") && modelMatch?.[1]) {
+      addUniqueString(models, seenModels, modelMatch[1]);
+    }
+
+    const modelCatalogPathMatch = withoutComment.match(
+      /^model_catalog_json\s*=\s*["']([^"']+)["']$/,
+    );
+    if (section === "provider" && modelCatalogPathMatch?.[1]) {
+      addUniqueString(modelCatalogPaths, seenCatalogPaths, modelCatalogPathMatch[1]);
+    }
+  }
+
+  return { models, modelCatalogPaths };
+}
+
+function parseModelCatalogModels(content: string): ReadonlyArray<string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return [];
+  }
+
+  const models = (parsed as { models?: unknown })?.models;
+  if (!Array.isArray(models)) {
+    return [];
+  }
+
+  const slugs: string[] = [];
+  const seen = new Set<string>();
+  for (const model of models) {
+    if (!model || typeof model !== "object") {
+      continue;
+    }
+    const slug = (model as { slug?: unknown }).slug;
+    if (typeof slug !== "string") {
+      continue;
+    }
+    const trimmed = slug.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    slugs.push(trimmed);
+  }
+  return slugs;
+}
+
+function mergeUniqueModels(
+  ...sources: ReadonlyArray<ReadonlyArray<string>>
+): ReadonlyArray<string> {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const source of sources) {
+    for (const candidate of source) {
+      if (seen.has(candidate)) {
+        continue;
+      }
+      seen.add(candidate);
+      merged.push(candidate);
+    }
+  }
+  return merged;
+}
+
 function resolveWorkspaceWritePath(params: {
   workspaceRoot: string;
   relativePath: string;
@@ -249,14 +357,42 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     autoBootstrapProjectFromCwd,
   } = serverConfig;
   const availableEditors = resolveAvailableEditors();
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const codexConfigModels = yield* Effect.gen(function* () {
+    const codexHome = process.env.CODEX_HOME ?? path.join(OS.homedir(), ".codex");
+    const configPath = path.join(codexHome, "config.toml");
+    const configContent = yield* fileSystem
+      .readFileString(configPath)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (configContent === undefined) {
+      return [] as ReadonlyArray<string>;
+    }
+
+    const parsedConfig = parseCodexConfig(configContent);
+    const catalogModels = yield* Effect.forEach(parsedConfig.modelCatalogPaths, (catalogPath) =>
+      Effect.gen(function* () {
+        const resolvedPath = path.isAbsolute(catalogPath)
+          ? catalogPath
+          : path.resolve(codexHome, catalogPath);
+        const catalogContent = yield* fileSystem
+          .readFileString(resolvedPath)
+          .pipe(Effect.orElseSucceed(() => undefined));
+        if (catalogContent === undefined) {
+          return [] as ReadonlyArray<string>;
+        }
+        return parseModelCatalogModels(catalogContent);
+      }),
+    );
+
+    return mergeUniqueModels(parsedConfig.models, ...catalogModels);
+  });
 
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
 
   yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
     Effect.catch((error) =>
@@ -874,6 +1010,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
           providers: providerStatuses,
+          codexConfigModels,
           availableEditors,
         };
 

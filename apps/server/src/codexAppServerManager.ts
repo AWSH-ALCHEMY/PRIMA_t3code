@@ -543,12 +543,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const codexOptions = readCodexProviderOptions(input);
       const codexBinaryPath = codexOptions.binaryPath ?? "codex";
       const codexHomePath = codexOptions.homePath;
+      const codexProfile = codexOptions.profile;
       this.assertSupportedCodexCliVersion({
         binaryPath: codexBinaryPath,
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
-      const child = spawn(codexBinaryPath, ["app-server"], {
+      const codexArgs = [
+        ...(codexProfile ? ["-c", `profile="${codexProfile}"`] : []),
+        "app-server",
+      ];
+      const child = spawn(codexBinaryPath, codexArgs, {
         cwd: resolvedCwd,
         env: {
           ...process.env,
@@ -1510,6 +1515,7 @@ function normalizeProviderThreadId(value: string | undefined): string | undefine
 function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
   readonly binaryPath?: string;
   readonly homePath?: string;
+  readonly profile?: string;
 } {
   const options = input.providerOptions?.codex;
   if (!options) {
@@ -1518,6 +1524,7 @@ function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
   return {
     ...(options.binaryPath ? { binaryPath: options.binaryPath } : {}),
     ...(options.homePath ? { homePath: options.homePath } : {}),
+    ...(options.profile ? { profile: options.profile } : {}),
   };
 }
 

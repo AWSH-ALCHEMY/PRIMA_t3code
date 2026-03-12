@@ -108,6 +108,7 @@ function createBaseServerConfig(): ServerConfig {
         checkedAt: NOW_ISO,
       },
     ],
+    codexConfigModels: [],
     availableEditors: [],
   };
 }

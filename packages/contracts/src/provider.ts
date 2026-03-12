@@ -50,6 +50,7 @@ export type ProviderSession = typeof ProviderSession.Type;
 const CodexProviderStartOptions = Schema.Struct({
   binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
   homePath: Schema.optional(TrimmedNonEmptyStringSchema),
+  profile: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 
 export const ProviderStartOptions = Schema.Struct({

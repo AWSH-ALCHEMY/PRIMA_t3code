@@ -97,6 +97,7 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const codexProfile = settings.codexProfile;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -280,6 +281,20 @@ function SettingsRouteView() {
                   </span>
                 </label>
 
+                <label htmlFor="codex-profile" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Codex profile</span>
+                  <Input
+                    id="codex-profile"
+                    value={codexProfile}
+                    onChange={(event) => updateSettings({ codexProfile: event.target.value })}
+                    placeholder="crofai"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Optional profile passed as <code>-p</code> to Codex app-server.
+                  </span>
+                </label>
+
                 <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0 flex-1">
                     <p>Binary source</p>
@@ -295,6 +310,7 @@ function SettingsRouteView() {
                       updateSettings({
                         codexBinaryPath: defaults.codexBinaryPath,
                         codexHomePath: defaults.codexHomePath,
+                        codexProfile: defaults.codexProfile,
                       })
                     }
                   >
