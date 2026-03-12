@@ -299,6 +299,54 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  it("attempts to resume codex history for imported codex thread ids", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const importedThreadId = ThreadId.makeUnsafe("codex-import-thread-session-abc123");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-create-imported"),
+        threadId: importedThreadId,
+        projectId: asProjectId("project-1"),
+        title: "Imported Thread",
+        model: "gpt-5-codex",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-imported"),
+        threadId: importedThreadId,
+        message: {
+          messageId: asMessageId("user-message-imported"),
+          role: "user",
+          text: "continue this thread",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[0]).toEqual(importedThreadId);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      threadId: importedThreadId,
+      resumeCursor: {
+        threadId: "session-abc123",
+      },
+    });
+  });
+
   it("forwards codex model options through session start and turn send", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -553,6 +601,49 @@ describe("ProviderCommandReactor", () => {
       runtimeMode: "approval-required",
       provider: "codex",
     });
+  });
+
+  it("appends provider.turn.start.failed activity when provider send fails", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    harness.sendTurn.mockImplementation(
+      () => Effect.fail(new Error("simulated send failure")) as never,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-send-failure"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-send-failure"),
+          role: "user",
+          text: "trigger failure",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+      );
+      return (
+        thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
+        false
+      );
+    });
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread).toBeDefined();
+    expect(
+      thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed"),
+    ).toBe(true);
   });
 
   it("restarts the provider session when runtime mode is updated on the thread", async () => {

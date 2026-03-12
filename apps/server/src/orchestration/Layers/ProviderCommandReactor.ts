@@ -44,6 +44,16 @@ function toNonEmptyProviderInput(value: string | undefined): string | undefined 
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
+function parseCodexImportedThreadResumeId(threadId: ThreadId): string | undefined {
+  const prefix = "codex-import-thread-";
+  const value = String(threadId);
+  if (!value.startsWith(prefix)) {
+    return undefined;
+  }
+  const candidate = value.slice(prefix.length).trim();
+  return candidate.length > 0 ? candidate : undefined;
+}
+
 function mapProviderSessionStatusToOrchestrationStatus(
   status: "connecting" | "ready" | "running" | "error" | "closed",
 ): OrchestrationSession["status"] {
@@ -329,9 +339,16 @@ const make = Effect.gen(function* () {
       return restartedSession.threadId;
     }
 
-    const startedSession = yield* startProviderSession(
-      options?.provider !== undefined ? { provider: options.provider } : undefined,
-    );
+    const importedResumeThreadId =
+      options?.provider === undefined || options.provider === "codex"
+        ? parseCodexImportedThreadResumeId(threadId)
+        : undefined;
+    const startedSession = yield* startProviderSession({
+      ...(options?.provider !== undefined ? { provider: options.provider } : {}),
+      ...(importedResumeThreadId !== undefined
+        ? { resumeCursor: { threadId: importedResumeThreadId } }
+        : {}),
+    });
     yield* bindSessionToThread(startedSession);
     return startedSession.threadId;
   });
@@ -500,7 +517,18 @@ const make = Effect.gen(function* () {
         : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
-    });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.turn.start.failed",
+          summary: "Provider turn start failed",
+          detail: Cause.pretty(cause),
+          turnId: null,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+    );
   });
 
   const processTurnInterruptRequested = Effect.fnUntraced(function* (
