@@ -474,6 +474,39 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       } satisfies OrchestrationCommand;
     }
 
+    if (input.command.type === "thread.fork") {
+      const forkCommand = input.command;
+      const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
+      const snapshot = yield* projectionReadModelQuery.getSnapshot();
+      const sourceThread = snapshot.threads.find(
+        (thread) => thread.id === forkCommand.sourceThreadId,
+      );
+      const sourceMessages =
+        forkCommand.sourceMessages && forkCommand.sourceMessages.length > 0
+          ? forkCommand.sourceMessages
+          : (sourceThread?.messages ?? []);
+      const sourceProposedPlans =
+        forkCommand.sourceProposedPlans && forkCommand.sourceProposedPlans.length > 0
+          ? forkCommand.sourceProposedPlans
+          : (sourceThread?.proposedPlans ?? []);
+      const sourceActivities =
+        forkCommand.sourceActivities && forkCommand.sourceActivities.length > 0
+          ? forkCommand.sourceActivities
+          : (sourceThread?.activities ?? []);
+      const sourceCheckpoints =
+        forkCommand.sourceCheckpoints && forkCommand.sourceCheckpoints.length > 0
+          ? forkCommand.sourceCheckpoints
+          : (sourceThread?.checkpoints ?? []);
+
+      return {
+        ...forkCommand,
+        sourceMessages,
+        sourceProposedPlans,
+        sourceActivities,
+        sourceCheckpoints,
+      } satisfies OrchestrationCommand;
+    }
+
     if (input.command.type !== "thread.turn.start") {
       return input.command as OrchestrationCommand;
     }

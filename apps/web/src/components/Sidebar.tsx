@@ -2,6 +2,7 @@ import {
   ArrowLeftIcon,
   ChevronRightIcon,
   FolderIcon,
+  GitForkIcon,
   GitPullRequestIcon,
   PlusIcon,
   RocketIcon,
@@ -294,6 +295,7 @@ export default function Sidebar() {
   const addProjectInputRef = useRef<HTMLInputElement | null>(null);
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
+  const [pendingForkThreadId, setPendingForkThreadId] = useState<ThreadId | null>(null);
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<ProjectId>
   >(() => new Set());
@@ -397,6 +399,21 @@ export default function Sidebar() {
       });
     });
   }, []);
+
+  useEffect(() => {
+    if (!pendingForkThreadId) {
+      return;
+    }
+    if (!threads.some((thread) => thread.id === pendingForkThreadId)) {
+      return;
+    }
+
+    setPendingForkThreadId(null);
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: pendingForkThreadId },
+    });
+  }, [navigate, pendingForkThreadId, threads]);
 
   const handleNewThread = useCallback(
     (
@@ -767,15 +784,64 @@ export default function Sidebar() {
           sourceThreadId,
           threadId,
           title: `Fork of ${sourceThread.title}`,
+          sourceMessages: sourceThread.messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            text: message.text,
+            ...(message.attachments
+              ? {
+                  attachments: message.attachments.map((attachment) => ({
+                    type: "image" as const,
+                    id: attachment.id,
+                    name: attachment.name,
+                    mimeType: attachment.mimeType,
+                    sizeBytes: attachment.sizeBytes,
+                  })),
+                }
+              : {}),
+            turnId: message.turnId ?? null,
+            streaming: message.streaming,
+            createdAt: message.createdAt,
+            updatedAt: message.completedAt ?? message.createdAt,
+          })),
+          sourceProposedPlans: sourceThread.proposedPlans.map((proposedPlan) => ({
+            id: proposedPlan.id,
+            turnId: proposedPlan.turnId,
+            planMarkdown: proposedPlan.planMarkdown,
+            createdAt: proposedPlan.createdAt,
+            updatedAt: proposedPlan.updatedAt,
+          })),
+          sourceActivities: sourceThread.activities.map((activity) => ({
+            ...activity,
+          })),
+          sourceCheckpoints: sourceThread.turnDiffSummaries
+            .filter((summary) => summary.checkpointRef !== undefined)
+            .map((summary) => ({
+              turnId: summary.turnId,
+              checkpointTurnCount: summary.checkpointTurnCount ?? 0,
+              checkpointRef: summary.checkpointRef!,
+              status:
+                summary.status === "error"
+                  ? "error"
+                  : summary.status === "missing"
+                    ? "missing"
+                    : "ready",
+              files: summary.files.map((file) => ({
+                path: file.path,
+                kind: file.kind ?? "modified",
+                additions: file.additions ?? 0,
+                deletions: file.deletions ?? 0,
+              })),
+              assistantMessageId: summary.assistantMessageId ?? null,
+              completedAt: summary.completedAt,
+            })),
           createdAt: new Date().toISOString(),
         });
-        if (selectedThreadIds.size > 0) {
-          clearSelection();
-        }
-        setSelectionAnchor(threadId);
-        await navigate({
-          to: "/$threadId",
-          params: { threadId },
+        setPendingForkThreadId(threadId);
+        toastManager.add({
+          type: "success",
+          title: "Thread forked",
+          description: "Opening the new fork...",
         });
       } catch (error) {
         toastManager.add({
@@ -785,7 +851,7 @@ export default function Sidebar() {
         });
       }
     },
-    [clearSelection, navigate, selectedThreadIds.size, setSelectionAnchor, threads],
+    [threads],
   );
 
   const handleThreadContextMenu = useCallback(
@@ -1667,8 +1733,12 @@ export default function Sidebar() {
                                         style={{ paddingLeft: `${depth * 12}px` }}
                                       >
                                         {depth > 0 && (
-                                          <span className="text-[10px] text-muted-foreground/45">
-                                            fork
+                                          <span
+                                            className="inline-flex items-center justify-center text-muted-foreground/45"
+                                            title="Forked from another thread"
+                                            aria-label="Forked thread"
+                                          >
+                                            <GitForkIcon className="size-3" />
                                           </span>
                                         )}
                                         {prStatus && (

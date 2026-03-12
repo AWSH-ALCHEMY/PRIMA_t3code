@@ -136,6 +136,24 @@ function runtimeErrorMessageFromEvent(event: ProviderRuntimeEvent): string | und
   return payloadMessage;
 }
 
+function runtimeModelFromEvent(event: ProviderRuntimeEvent): string | undefined {
+  if (event.type === "turn.started") {
+    const payload =
+      event.payload && typeof event.payload === "object"
+        ? (event.payload as Record<string, unknown>)
+        : null;
+    return typeof payload?.model === "string" ? payload.model : undefined;
+  }
+  if (event.type === "model.rerouted") {
+    const payload =
+      event.payload && typeof event.payload === "object"
+        ? (event.payload as Record<string, unknown>)
+        : null;
+    return typeof payload?.toModel === "string" ? payload.toModel : undefined;
+  }
+  return undefined;
+}
+
 function orchestrationSessionStatusFromRuntimeState(
   state: "starting" | "running" | "waiting" | "ready" | "interrupted" | "stopped" | "error",
 ): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
@@ -185,8 +203,15 @@ function isToolLifecycleItemType(itemType: string): boolean {
   );
 }
 
+function isContextCompactionItemType(itemType: string): boolean {
+  return itemType === "context_compaction";
+}
+
 function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
+  options?: {
+    readonly threadModelSnapshot?: string;
+  },
 ): ReadonlyArray<OrchestrationThreadActivity> {
   const maybeSequence = (() => {
     const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
@@ -195,6 +220,51 @@ function runtimeEventToActivities(
       : {};
   })();
   switch (event.type) {
+    case "turn.started": {
+      const payload =
+        event.payload && typeof event.payload === "object"
+          ? (event.payload as Record<string, unknown>)
+          : null;
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "turn.started",
+          summary: "Turn started",
+          payload: {
+            ...(typeof payload?.model === "string" ? { model: payload.model } : {}),
+            ...(typeof payload?.effort === "string" ? { effort: payload.effort } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "model.rerouted": {
+      const payload =
+        event.payload && typeof event.payload === "object"
+          ? (event.payload as Record<string, unknown>)
+          : null;
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "model.rerouted",
+          summary: "Model rerouted",
+          payload: {
+            ...(typeof payload?.fromModel === "string" ? { fromModel: payload.fromModel } : {}),
+            ...(typeof payload?.toModel === "string" ? { toModel: payload.toModel } : {}),
+            ...(typeof payload?.reason === "string" ? { reason: payload.reason } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
         return [];
@@ -289,6 +359,23 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "thread.token-usage.updated": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "thread.token-usage.updated",
+          summary: "Token usage updated",
+          payload: {
+            usage: event.payload.usage,
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "turn.plan.updated": {
       return [
         {
@@ -364,6 +451,9 @@ function runtimeEventToActivities(
             ...(event.payload.description
               ? { detail: truncateDetail(event.payload.description) }
               : {}),
+            ...(options?.threadModelSnapshot && toTurnId(event.turnId)
+              ? { model: options.threadModelSnapshot }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -416,7 +506,47 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "thread.state.changed": {
+      if (event.payload.state !== "compacted") {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "thread.compacted",
+          summary: "Context compacted",
+          payload: {
+            state: event.payload.state,
+            ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "item.updated": {
+      if (isContextCompactionItemType(event.payload.itemType)) {
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "info",
+            kind: "context.compaction.updated",
+            summary: "Context compaction updated",
+            payload: {
+              itemType: event.payload.itemType,
+              ...(event.payload.status ? { status: event.payload.status } : {}),
+              ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+              ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
@@ -440,6 +570,25 @@ function runtimeEventToActivities(
     }
 
     case "item.completed": {
+      if (isContextCompactionItemType(event.payload.itemType)) {
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "info",
+            kind: "context.compaction.completed",
+            summary: "Context compacted",
+            payload: {
+              itemType: event.payload.itemType,
+              ...(event.payload.status ? { status: event.payload.status } : {}),
+              ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+              ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
@@ -461,6 +610,25 @@ function runtimeEventToActivities(
     }
 
     case "item.started": {
+      if (isContextCompactionItemType(event.payload.itemType)) {
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "info",
+            kind: "context.compaction.started",
+            summary: "Context compaction started",
+            payload: {
+              itemType: event.payload.itemType,
+              ...(event.payload.status ? { status: event.payload.status } : {}),
+              ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+              ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
@@ -883,6 +1051,16 @@ const make = Effect.gen(function* () {
         }
       }
 
+      const runtimeModel = runtimeModelFromEvent(event);
+      if (runtimeModel && runtimeModel !== thread.model) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.meta.update",
+          commandId: providerCommandId(event, "thread-model-update"),
+          threadId: thread.id,
+          model: runtimeModel,
+        });
+      }
+
       const assistantDelta =
         event.type === "content.delta" && event.payload.streamKind === "assistant_text"
           ? event.payload.delta
@@ -1095,7 +1273,9 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const activities = runtimeEventToActivities(event);
+      const activities = runtimeEventToActivities(event, {
+        threadModelSnapshot: thread.model,
+      });
       yield* Effect.forEach(activities, (activity) =>
         orchestrationEngine.dispatch({
           type: "thread.activity.append",

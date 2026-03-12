@@ -479,6 +479,55 @@ describe("deriveWorkLogEntries", () => {
       "apps/web/src/session-logic.ts",
     ]);
   });
+
+  it("flags context compaction entries and preserves expandable payload", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "context-compaction",
+        kind: "context.compaction.completed",
+        summary: "Context compacted",
+        tone: "info",
+        payload: {
+          itemType: "context_compaction",
+          detail: "Compacted earlier conversation chunks",
+          data: {
+            droppedMessageCount: 14,
+            retainedSummaryTokens: 550,
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.variant).toBe("context-compaction");
+    expect(entry?.label).toBe("Context compacted");
+    expect(entry?.detail).toBe("Compacted earlier conversation chunks");
+    expect(entry?.compactionPayloadJson).toContain('"droppedMessageCount": 14');
+  });
+
+  it("extracts compacted context markdown when provided by runtime payload", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "context-compaction-markdown",
+        kind: "context.compaction.completed",
+        summary: "Context compacted",
+        tone: "info",
+        payload: {
+          itemType: "context_compaction",
+          data: {
+            droppedMessageCount: 8,
+            compactedContextMarkdown:
+              "## Compacted Context\n\n- User asked for import support\n- Agent implemented importer",
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.variant).toBe("context-compaction");
+    expect(entry?.compactionContextMarkdown).toContain("## Compacted Context");
+    expect(entry?.compactionPayloadJson).toContain('"droppedMessageCount": 8');
+  });
 });
 
 describe("deriveTimelineEntries", () => {

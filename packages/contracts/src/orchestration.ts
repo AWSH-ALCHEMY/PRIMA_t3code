@@ -332,6 +332,10 @@ const ThreadForkCommand = Schema.Struct({
   sourceThreadId: ThreadId,
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
+  sourceMessages: Schema.optional(Schema.Array(OrchestrationMessage)),
+  sourceProposedPlans: Schema.optional(Schema.Array(OrchestrationProposedPlan)),
+  sourceActivities: Schema.optional(Schema.Array(OrchestrationThreadActivity)),
+  sourceCheckpoints: Schema.optional(Schema.Array(OrchestrationCheckpointSummary)),
   createdAt: IsoDateTime,
 });
 

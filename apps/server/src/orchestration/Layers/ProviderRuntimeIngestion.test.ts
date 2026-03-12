@@ -255,6 +255,69 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("tracks per-thread model from runtime events", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-model"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-model-1"),
+      payload: {
+        model: "kimi-k2.5-thinking",
+      },
+    });
+
+    await waitForThread(harness.engine, (thread) => thread.model === "kimi-k2.5-thinking");
+
+    harness.emit({
+      type: "model.rerouted",
+      eventId: asEventId("evt-model-rerouted"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId: asTurnId("turn-model-1"),
+      payload: {
+        fromModel: "kimi-k2.5-thinking",
+        toModel: "gpt-5-codex",
+        reason: "provider policy",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.model === "gpt-5-codex" &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "model.rerouted",
+        ),
+    );
+
+    const started = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-turn-started-model",
+    );
+    const startedPayload =
+      started?.payload && typeof started.payload === "object"
+        ? (started.payload as Record<string, unknown>)
+        : undefined;
+    expect(started?.kind).toBe("turn.started");
+    expect(startedPayload?.model).toBe("kimi-k2.5-thinking");
+
+    const rerouted = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-model-rerouted",
+    );
+    const reroutedPayload =
+      rerouted?.payload && typeof rerouted.payload === "object"
+        ? (rerouted.payload as Record<string, unknown>)
+        : undefined;
+    expect(rerouted?.kind).toBe("model.rerouted");
+    expect(reroutedPayload?.fromModel).toBe("kimi-k2.5-thinking");
+    expect(reroutedPayload?.toModel).toBe("gpt-5-codex");
+  });
+
   it("applies provider session.state.changed transitions directly", async () => {
     const harness = await createHarness();
     const waitingAt = new Date().toISOString();
@@ -1141,6 +1204,51 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it("projects thread token-usage updates into thread activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-token-usage-updated"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-usage-1"),
+      payload: {
+        usage: {
+          inputTokens: 1234,
+          outputTokens: 210,
+          totalTokens: 1444,
+          contextWindowTokens: 128000,
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "evt-token-usage-updated" &&
+          activity.kind === "thread.token-usage.updated",
+      ),
+    );
+
+    const tokenUsageActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-token-usage-updated",
+    );
+    const tokenUsagePayload =
+      tokenUsageActivity?.payload && typeof tokenUsageActivity.payload === "object"
+        ? (tokenUsageActivity.payload as Record<string, unknown>)
+        : undefined;
+    expect(tokenUsageActivity?.kind).toBe("thread.token-usage.updated");
+    expect(tokenUsagePayload?.usage).toEqual({
+      inputTokens: 1234,
+      outputTokens: 210,
+      totalTokens: 1444,
+      contextWindowTokens: 128000,
+    });
+  });
+
   it("maps session/thread lifecycle and item.started into session/activity projections", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -1256,6 +1364,25 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-context-compaction-completed"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-p1"),
+      payload: {
+        itemType: "context_compaction",
+        status: "completed",
+        title: "Context compaction",
+        detail: "Compacted prior conversation chunks",
+        data: {
+          droppedMessageCount: 10,
+          retainedSummaryTokens: 420,
+        },
+      },
+    });
+
+    harness.emit({
       type: "turn.diff.updated",
       eventId: asEventId("evt-turn-diff-updated"),
       provider: "codex",
@@ -1280,6 +1407,10 @@ describe("ProviderRuntimeIngestion", () => {
         ) &&
         entry.activities.some(
           (activity: ProviderRuntimeTestActivity) => activity.kind === "runtime.warning",
+        ) &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) =>
+            activity.kind === "context.compaction.completed",
         ) &&
         entry.checkpoints.some(
           (checkpoint: ProviderRuntimeTestCheckpoint) => checkpoint.turnId === "turn-p1",
@@ -1318,6 +1449,16 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
     expect(warning?.kind).toBe("runtime.warning");
     expect(warningPayload?.message).toBe("Provider got slow");
+
+    const compaction = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-context-compaction-completed",
+    );
+    const compactionPayload =
+      compaction?.payload && typeof compaction.payload === "object"
+        ? (compaction.payload as Record<string, unknown>)
+        : undefined;
+    expect(compaction?.kind).toBe("context.compaction.completed");
+    expect(compactionPayload?.detail).toBe("Compacted prior conversation chunks");
 
     const checkpoint = thread.checkpoints.find(
       (entry: ProviderRuntimeTestCheckpoint) => entry.turnId === "turn-p1",
@@ -1408,6 +1549,10 @@ describe("ProviderRuntimeIngestion", () => {
       progress?.payload && typeof progress.payload === "object"
         ? (progress.payload as Record<string, unknown>)
         : undefined;
+    const startedPayload =
+      started?.payload && typeof started.payload === "object"
+        ? (started.payload as Record<string, unknown>)
+        : undefined;
     const completedPayload =
       completed?.payload && typeof completed.payload === "object"
         ? (completed.payload as Record<string, unknown>)
@@ -1415,6 +1560,7 @@ describe("ProviderRuntimeIngestion", () => {
 
     expect(started?.kind).toBe("task.started");
     expect(started?.summary).toBe("Plan task started");
+    expect(startedPayload?.model).toBe("gpt-5-codex");
     expect(progress?.kind).toBe("task.progress");
     expect(progressPayload?.detail).toBe(
       "Comparing the desktop rollout chunks to the app-server stream.",

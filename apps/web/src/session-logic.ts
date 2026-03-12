@@ -35,6 +35,9 @@ export interface WorkLogEntry {
   detail?: string;
   command?: string;
   changedFiles?: ReadonlyArray<string>;
+  variant?: "default" | "context-compaction";
+  compactionPayloadJson?: string;
+  compactionContextMarkdown?: string;
   tone: "thinking" | "tool" | "info" | "error";
 }
 
@@ -421,13 +424,28 @@ export function deriveWorkLogEntries(
         activity.payload && typeof activity.payload === "object"
           ? (activity.payload as Record<string, unknown>)
           : null;
+      const isCompactionActivity =
+        activity.kind === "thread.compacted" ||
+        activity.kind === "context.compaction.started" ||
+        activity.kind === "context.compaction.updated" ||
+        activity.kind === "context.compaction.completed" ||
+        payload?.itemType === "context_compaction";
       const command = extractToolCommand(payload);
       const changedFiles = extractChangedFiles(payload);
+      const compactionContextMarkdown = isCompactionActivity
+        ? extractCompactionContextMarkdown(payload)
+        : null;
+      const compactionPayloadJson = isCompactionActivity
+        ? stringifyPayloadForDisplay(payload?.data ?? payload?.detail ?? payload)
+        : null;
       const entry: WorkLogEntry = {
         id: activity.id,
         createdAt: activity.createdAt,
-        label: activity.summary,
+        label: isCompactionActivity ? "Context compacted" : activity.summary,
         tone: activity.tone === "approval" ? "info" : activity.tone,
+        ...(isCompactionActivity ? { variant: "context-compaction" as const } : {}),
+        ...(compactionContextMarkdown ? { compactionContextMarkdown } : {}),
+        ...(compactionPayloadJson ? { compactionPayloadJson } : {}),
       };
       if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
         entry.detail = payload.detail;
@@ -440,6 +458,95 @@ export function deriveWorkLogEntries(
       }
       return entry;
     });
+}
+
+function stringifyPayloadForDisplay(value: unknown): string | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  try {
+    const json = JSON.stringify(value, null, 2);
+    if (!json) {
+      return null;
+    }
+    return json.length > 6000 ? `${json.slice(0, 6000)}\n...` : json;
+  } catch {
+    return null;
+  }
+}
+
+function extractCompactionContextMarkdown(payload: Record<string, unknown> | null): string | null {
+  if (!payload) {
+    return null;
+  }
+
+  const candidates = findCompactionMarkdownCandidates(payload);
+  for (const candidate of candidates) {
+    const normalized = asTrimmedString(candidate);
+    if (normalized) {
+      return normalizeEscapedMarkdownWhitespace(normalized);
+    }
+  }
+  return null;
+}
+
+function normalizeEscapedMarkdownWhitespace(value: string): string {
+  if (!value.includes("\\n") && !value.includes("\\t") && !value.includes("\\r")) {
+    return value;
+  }
+  return value.replaceAll("\\r\\n", "\n").replaceAll("\\n", "\n").replaceAll("\\t", "\t");
+}
+
+function findCompactionMarkdownCandidates(root: Record<string, unknown>): unknown[] {
+  const queue: unknown[] = [root];
+  const seen = new Set<unknown>();
+  const matches: unknown[] = [];
+  const markdownKeyPattern = /(markdown|md|summary|compacted|context|prompt|transcript|history)/i;
+  const hardCandidateKeys = new Set([
+    "compactedContextMarkdown",
+    "compacted_context_markdown",
+    "contextMarkdown",
+    "context_markdown",
+    "summaryMarkdown",
+    "summary_markdown",
+    "compactedContext",
+    "contextSummary",
+    "context_summary",
+    "summary",
+    "markdown",
+  ]);
+
+  while (queue.length > 0 && matches.length < 64) {
+    const current = queue.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+
+    if (Array.isArray(current)) {
+      for (const item of current) {
+        queue.push(item);
+      }
+      continue;
+    }
+
+    const record = current as Record<string, unknown>;
+    for (const [rawKey, value] of Object.entries(record)) {
+      const key = rawKey.trim();
+      if (hardCandidateKeys.has(key) || markdownKeyPattern.test(key)) {
+        matches.push(value);
+      }
+      if (value && typeof value === "object") {
+        queue.push(value);
+      }
+    }
+  }
+
+  return matches;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

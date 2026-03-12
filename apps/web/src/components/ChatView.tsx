@@ -143,6 +143,7 @@ import {
   ListTodoIcon,
   LockIcon,
   LockOpenIcon,
+  RefreshCwIcon,
   Undo2Icon,
   XIcon,
   CopyIcon,
@@ -225,9 +226,252 @@ import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./Compose
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
-function formatMessageMeta(createdAt: string, duration: string | null): string {
-  if (!duration) return formatTimestamp(createdAt);
-  return `${formatTimestamp(createdAt)} • ${duration}`;
+function formatMessageMetaParts(
+  createdAt: string,
+  duration: string | null,
+  model?: string,
+): string[] {
+  const parts: string[] = [];
+  if (model) {
+    parts.push(model);
+  }
+  parts.push(formatTimestamp(createdAt));
+  if (duration) {
+    parts.push(duration);
+  }
+  return parts;
+}
+
+type TurnUsageMetrics = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  contextWindowTokens?: number;
+};
+
+function preferNonZeroTokenMetric(
+  nextValue: number | undefined,
+  currentValue: number | undefined,
+): number | undefined {
+  if (typeof nextValue !== "number" || !Number.isFinite(nextValue)) return currentValue;
+  if (nextValue > 0) return nextValue;
+  if (typeof currentValue !== "number" || !Number.isFinite(currentValue)) return nextValue;
+  return currentValue;
+}
+
+function mergeTurnUsageMetrics(
+  current: TurnUsageMetrics | undefined,
+  incoming: TurnUsageMetrics,
+): TurnUsageMetrics {
+  if (!current) {
+    return incoming;
+  }
+  const inputTokens = preferNonZeroTokenMetric(incoming.inputTokens, current.inputTokens);
+  const outputTokens = preferNonZeroTokenMetric(incoming.outputTokens, current.outputTokens);
+  const totalTokens = preferNonZeroTokenMetric(incoming.totalTokens, current.totalTokens);
+  const contextWindowTokens = preferNonZeroTokenMetric(
+    incoming.contextWindowTokens,
+    current.contextWindowTokens,
+  );
+  return {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(contextWindowTokens !== undefined ? { contextWindowTokens } : {}),
+  };
+}
+
+function formatTokenCount(value: number): string {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatTurnUsageMeta(metrics: TurnUsageMetrics): string | null {
+  const parts: string[] = [];
+  if (typeof metrics.inputTokens === "number" && Number.isFinite(metrics.inputTokens)) {
+    parts.push(`In ${formatTokenCount(metrics.inputTokens)} tok`);
+  }
+  if (typeof metrics.outputTokens === "number" && Number.isFinite(metrics.outputTokens)) {
+    parts.push(`Out ${formatTokenCount(metrics.outputTokens)} tok`);
+  }
+  if (typeof metrics.totalTokens === "number" && Number.isFinite(metrics.totalTokens)) {
+    parts.push(`Total ${formatTokenCount(metrics.totalTokens)} tok`);
+  }
+  if (
+    typeof metrics.contextWindowTokens === "number" &&
+    Number.isFinite(metrics.contextWindowTokens) &&
+    metrics.contextWindowTokens > 0
+  ) {
+    const used =
+      typeof metrics.inputTokens === "number" && Number.isFinite(metrics.inputTokens)
+        ? metrics.inputTokens
+        : typeof metrics.totalTokens === "number" && Number.isFinite(metrics.totalTokens)
+          ? metrics.totalTokens
+          : undefined;
+    if (typeof used === "number") {
+      const percent = Math.min(
+        100,
+        Math.max(0, Math.round((used / metrics.contextWindowTokens) * 100)),
+      );
+      parts.push(
+        `Ctx ${formatTokenCount(used)}/${formatTokenCount(metrics.contextWindowTokens)} (${percent}%)`,
+      );
+    }
+  }
+  return parts.length > 0 ? parts.join(" • ") : null;
+}
+
+function formatTurnUsageMetaParts(metrics: TurnUsageMetrics): string[] {
+  const formatted = formatTurnUsageMeta(metrics);
+  if (!formatted) return [];
+  return formatted.split(" • ");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function firstFiniteNumberForKeys(
+  source: Record<string, unknown>,
+  keys: ReadonlyArray<string>,
+): number | undefined {
+  for (const key of keys) {
+    const candidate = source[key];
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function extractUsageMetrics(value: unknown): TurnUsageMetrics | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  // Prefer Codex's per-turn usage snapshot when present.
+  // `tokenUsage.total` is cumulative across the thread and can exceed the model window,
+  // while `tokenUsage.last` reflects the current turn context pressure.
+  const tokenUsage = isRecord(value.tokenUsage) ? value.tokenUsage : undefined;
+  const lastUsage = tokenUsage && isRecord(tokenUsage.last) ? tokenUsage.last : undefined;
+  if (lastUsage) {
+    const inputTokens = firstFiniteNumberForKeys(lastUsage, [
+      "inputTokens",
+      "input_tokens",
+      "promptTokens",
+      "prompt_tokens",
+      "input",
+      "prompt",
+    ]);
+    const outputTokens = firstFiniteNumberForKeys(lastUsage, [
+      "outputTokens",
+      "output_tokens",
+      "completionTokens",
+      "completion_tokens",
+      "output",
+      "completion",
+    ]);
+    const totalTokens = firstFiniteNumberForKeys(lastUsage, [
+      "totalTokens",
+      "total_tokens",
+      "tokens",
+      "total",
+    ]);
+    const contextWindowTokens =
+      (tokenUsage
+        ? firstFiniteNumberForKeys(tokenUsage, [
+            "modelContextWindow",
+            "model_context_window",
+            "contextWindowTokens",
+            "context_window_tokens",
+          ])
+        : undefined) ??
+      firstFiniteNumberForKeys(value, [
+        "modelContextWindow",
+        "model_context_window",
+        "contextWindowTokens",
+        "context_window_tokens",
+      ]);
+    return {
+      ...(inputTokens !== undefined ? { inputTokens } : {}),
+      ...(outputTokens !== undefined ? { outputTokens } : {}),
+      ...(totalTokens !== undefined ? { totalTokens } : {}),
+      ...(contextWindowTokens !== undefined ? { contextWindowTokens } : {}),
+    };
+  }
+
+  const queue: Record<string, unknown>[] = [value];
+  const visited = new Set<unknown>();
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+  let totalTokens: number | undefined;
+  let contextWindowTokens: number | undefined;
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+
+    inputTokens ??= firstFiniteNumberForKeys(current, [
+      "inputTokens",
+      "input_tokens",
+      "promptTokens",
+      "prompt_tokens",
+      "input",
+      "prompt",
+    ]);
+    outputTokens ??= firstFiniteNumberForKeys(current, [
+      "outputTokens",
+      "output_tokens",
+      "completionTokens",
+      "completion_tokens",
+      "output",
+      "completion",
+    ]);
+    totalTokens ??= firstFiniteNumberForKeys(current, [
+      "totalTokens",
+      "total_tokens",
+      "tokens",
+      "total",
+    ]);
+    contextWindowTokens ??= firstFiniteNumberForKeys(current, [
+      "contextWindowTokens",
+      "context_window_tokens",
+      "modelContextWindow",
+      "model_context_window",
+      "contextWindow",
+      "context_window",
+      "maxInputTokens",
+      "max_input_tokens",
+      "inputTokenLimit",
+      "input_token_limit",
+      "tokenLimit",
+      "token_limit",
+    ]);
+
+    for (const nested of Object.values(current)) {
+      if (isRecord(nested)) {
+        queue.push(nested);
+      }
+    }
+  }
+
+  if (
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    totalTokens === undefined &&
+    contextWindowTokens === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(contextWindowTokens !== undefined ? { contextWindowTokens } : {}),
+  };
 }
 
 function formatWorkingTimer(startIso: string, endIso: string): string | null {
@@ -1211,6 +1455,61 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     return byMessageId;
   }, [turnDiffSummaries]);
+  const responseModelByTurnId = useMemo(() => {
+    const byTurnId = new Map<TurnId, string>();
+    for (const activity of activeThread?.activities ?? []) {
+      if (!activity.turnId) {
+        continue;
+      }
+      const payload =
+        activity.payload && typeof activity.payload === "object"
+          ? (activity.payload as Record<string, unknown>)
+          : null;
+      if (!payload) {
+        continue;
+      }
+      const modelValue =
+        activity.kind === "turn.started"
+          ? payload.model
+          : activity.kind === "task.started"
+            ? payload.model
+            : activity.kind === "model.rerouted"
+              ? payload.toModel
+              : undefined;
+      if (typeof modelValue !== "string" || modelValue.trim().length === 0) {
+        continue;
+      }
+      byTurnId.set(activity.turnId, modelValue.trim());
+    }
+    return byTurnId;
+  }, [activeThread?.activities]);
+  const responseUsageByTurnId = useMemo(() => {
+    const byTurnId = new Map<TurnId, TurnUsageMetrics>();
+    for (const activity of activeThread?.activities ?? []) {
+      if (!activity.turnId) {
+        continue;
+      }
+      const payload =
+        activity.payload && typeof activity.payload === "object"
+          ? (activity.payload as Record<string, unknown>)
+          : null;
+      if (!payload) {
+        continue;
+      }
+      const usageMetrics =
+        extractUsageMetrics(payload.usage) ??
+        extractUsageMetrics(payload.modelUsage) ??
+        extractUsageMetrics(payload);
+      if (!usageMetrics) {
+        continue;
+      }
+      byTurnId.set(
+        activity.turnId,
+        mergeTurnUsageMetrics(byTurnId.get(activity.turnId), usageMetrics),
+      );
+    }
+    return byTurnId;
+  }, [activeThread?.activities]);
   const revertTurnCountByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<MessageId, number>();
     for (let index = 0; index < timelineEntries.length; index += 1) {
@@ -3545,6 +3844,85 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     void onRevertToTurnCount(targetTurnCount);
   };
+  const onResendUserMessage = useCallback(
+    async (message: ChatMessage) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || isConnecting || isSendBusy || sendInFlightRef.current) {
+        return;
+      }
+
+      if ((message.attachments?.length ?? 0) > 0) {
+        toastManager.add({
+          type: "error",
+          title: "Cannot re-send image attachments yet",
+          description:
+            "This message contains images and the original upload payload is unavailable. Re-send using the composer.",
+        });
+        return;
+      }
+
+      sendInFlightRef.current = true;
+      beginSendPhase("sending-turn");
+      const createdAt = new Date().toISOString();
+      setThreadError(activeThread.id, null);
+
+      try {
+        await persistThreadSettingsForNextTurn({
+          threadId: activeThread.id,
+          createdAt,
+          ...(selectedModel ? { model: selectedModel } : {}),
+          runtimeMode,
+          interactionMode,
+        });
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          message: {
+            messageId: message.id,
+            role: "user",
+            text: message.text,
+            attachments: [],
+          },
+          model: selectedModel || undefined,
+          ...(selectedModelOptionsForDispatch
+            ? { modelOptions: selectedModelOptionsForDispatch }
+            : {}),
+          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+          provider: selectedProvider,
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode,
+          interactionMode,
+          createdAt,
+        });
+      } catch (error) {
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to re-send message.",
+        );
+        resetSendPhase();
+      } finally {
+        sendInFlightRef.current = false;
+      }
+    },
+    [
+      activeThread,
+      beginSendPhase,
+      interactionMode,
+      isConnecting,
+      isSendBusy,
+      persistThreadSettingsForNextTurn,
+      providerOptionsForDispatch,
+      resetSendPhase,
+      runtimeMode,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      selectedProvider,
+      setThreadError,
+      settings.enableAssistantStreaming,
+    ],
+  );
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -3642,12 +4020,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
               completionDividerBeforeEntryId={completionDividerBeforeEntryId}
               completionSummary={completionSummary}
               turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+              responseModelByTurnId={responseModelByTurnId}
+              responseUsageByTurnId={responseUsageByTurnId}
               nowIso={nowIso}
               expandedWorkGroups={expandedWorkGroups}
               onToggleWorkGroup={onToggleWorkGroup}
               onOpenTurnDiff={onOpenTurnDiff}
               revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
               onRevertUserMessage={onRevertUserMessage}
+              onResendUserMessage={onResendUserMessage}
+              isResendDisabled={isWorking || isSendBusy || isConnecting || isRevertingCheckpoint}
               isRevertingCheckpoint={isRevertingCheckpoint}
               onImageExpand={onExpandTimelineImage}
               markdownCwd={gitCwd ?? undefined}
@@ -5087,12 +5469,16 @@ interface MessagesTimelineProps {
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
+  responseModelByTurnId: Map<TurnId, string>;
+  responseUsageByTurnId: Map<TurnId, TurnUsageMetrics>;
   nowIso: string;
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  onResendUserMessage: (message: ChatMessage) => void;
+  isResendDisabled: boolean;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
@@ -5141,12 +5527,16 @@ const MessagesTimeline = memo(function MessagesTimeline({
   completionDividerBeforeEntryId,
   completionSummary,
   turnDiffSummaryByAssistantMessageId,
+  responseModelByTurnId,
+  responseUsageByTurnId,
   nowIso,
   expandedWorkGroups,
   onToggleWorkGroup,
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  onResendUserMessage,
+  isResendDisabled,
   isRevertingCheckpoint,
   onImageExpand,
   markdownCwd,
@@ -5240,6 +5630,18 @@ const MessagesTimeline = memo(function MessagesTimeline({
 
     return nextRows;
   }, [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt]);
+  const canResendByUserMessageId = useMemo(() => {
+    const result = new Map<MessageId, boolean>();
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      if (!row || row.kind !== "message" || row.message.role !== "user") {
+        continue;
+      }
+      // Allow re-sending any previous user prompt so the user can regenerate alternatives.
+      result.set(row.message.id, true);
+    }
+    return result;
+  }, [rows]);
 
   const firstUnvirtualizedRowIndex = useMemo(() => {
     const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
@@ -5390,45 +5792,95 @@ const MessagesTimeline = memo(function MessagesTimeline({
               </div>
               <div className="space-y-1">
                 {visibleEntries.map((workEntry) => (
-                  <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
-                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-                    <div className="min-w-0 flex-1 py-[2px]">
-                      <p className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}>
-                        {workEntry.label}
-                      </p>
-                      {workEntry.command && (
-                        <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
-                          {workEntry.command}
-                        </pre>
-                      )}
-                      {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {workEntry.changedFiles.slice(0, 6).map((filePath) => (
-                            <span
-                              key={`${workEntry.id}:${filePath}`}
-                              className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
-                              title={filePath}
-                            >
-                              {filePath}
-                            </span>
-                          ))}
-                          {workEntry.changedFiles.length > 6 && (
-                            <span className="px-1 text-[10px] text-muted-foreground/65">
-                              +{workEntry.changedFiles.length - 6} more
-                            </span>
-                          )}
+                  <div key={`work-row:${workEntry.id}`} className="py-0.5">
+                    {workEntry.variant === "context-compaction" ? (
+                      <div className="overflow-hidden rounded-md border border-amber-500/50 bg-amber-50/90 px-2.5 py-2 text-amber-950 dark:border-amber-400/45 dark:bg-amber-950/35 dark:text-amber-100">
+                        <div className="my-1 flex items-center gap-2">
+                          <Separator className="hidden bg-amber-500/45 sm:block dark:bg-amber-300/40" />
+                          <span className="inline-flex min-w-0 items-center gap-1 text-[10px] font-semibold tracking-[0.12em] text-amber-800 uppercase whitespace-normal break-words dark:text-amber-100">
+                            <CircleAlertIcon className="size-3.5" />
+                            Context Compaction
+                          </span>
+                          <Separator className="hidden bg-amber-500/45 sm:block dark:bg-amber-300/40" />
                         </div>
-                      )}
-                      {workEntry.detail &&
-                        (!workEntry.command || workEntry.detail !== workEntry.command) && (
-                          <p
-                            className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
-                            title={workEntry.detail}
-                          >
+                        {workEntry.detail && (
+                          <p className="mt-1 text-[11px] leading-relaxed text-amber-900/90 break-words dark:text-amber-100/90">
                             {workEntry.detail}
                           </p>
                         )}
-                    </div>
+                        {(workEntry.compactionContextMarkdown ||
+                          workEntry.compactionPayloadJson) && (
+                          <details className="mt-2 rounded-md border border-amber-500/35 bg-amber-100/70 p-1.5 dark:border-amber-300/25 dark:bg-amber-900/40">
+                            <summary className="cursor-pointer list-none text-[11px] font-medium text-amber-900 break-words dark:text-amber-100">
+                              <span className="inline-flex items-center gap-1.5">
+                                <ChevronRightIcon className="size-3 transition-transform duration-150 details-open:rotate-90" />
+                                Show compaction details
+                              </span>
+                            </summary>
+                            {workEntry.compactionContextMarkdown && (
+                              <div className="mt-2 max-h-72 overflow-auto rounded border border-amber-500/35 bg-amber-50/85 px-2 py-2 text-[11px] leading-relaxed text-amber-950 dark:border-amber-300/25 dark:bg-amber-950/55 dark:text-amber-100">
+                                <p className="mb-1 text-[10px] font-semibold tracking-[0.1em] text-amber-800 uppercase dark:text-amber-200">
+                                  Compacted Context (Markdown)
+                                </p>
+                                <ChatMarkdown
+                                  text={workEntry.compactionContextMarkdown}
+                                  cwd={markdownCwd}
+                                  isStreaming={false}
+                                />
+                              </div>
+                            )}
+                            {workEntry.compactionPayloadJson && (
+                              <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-all rounded border border-amber-500/35 bg-amber-50/85 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-amber-950 dark:border-amber-300/25 dark:bg-amber-950/55 dark:text-amber-100">
+                                {workEntry.compactionPayloadJson}
+                              </pre>
+                            )}
+                          </details>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-2">
+                        <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
+                        <div className="min-w-0 flex-1 py-[2px]">
+                          <p
+                            className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}
+                          >
+                            {workEntry.label}
+                          </p>
+                          {workEntry.command && (
+                            <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
+                              {workEntry.command}
+                            </pre>
+                          )}
+                          {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {workEntry.changedFiles.slice(0, 6).map((filePath) => (
+                                <span
+                                  key={`${workEntry.id}:${filePath}`}
+                                  className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
+                                  title={filePath}
+                                >
+                                  {filePath}
+                                </span>
+                              ))}
+                              {workEntry.changedFiles.length > 6 && (
+                                <span className="px-1 text-[10px] text-muted-foreground/65">
+                                  +{workEntry.changedFiles.length - 6} more
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {workEntry.detail &&
+                            (!workEntry.command || workEntry.detail !== workEntry.command) && (
+                              <p
+                                className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
+                                title={workEntry.detail}
+                              >
+                                {workEntry.detail}
+                              </p>
+                            )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -5441,6 +5893,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
         (() => {
           const userImages = row.message.attachments ?? [];
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
+          const canResend = canResendByUserMessageId.get(row.message.id) === true;
           return (
             <div className="flex justify-end">
               <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
@@ -5489,6 +5942,18 @@ const MessagesTimeline = memo(function MessagesTimeline({
                 <div className="mt-1.5 flex items-center justify-end gap-2">
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
                     {row.message.text && <MessageCopyButton text={row.message.text} />}
+                    {canResend && (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={isResendDisabled}
+                        onClick={() => onResendUserMessage(row.message)}
+                        title="Re-send this message to the backend"
+                      >
+                        <RefreshCwIcon className="size-3" />
+                      </Button>
+                    )}
                     {canRevertAgentWork && (
                       <Button
                         type="button"
@@ -5515,6 +5980,31 @@ const MessagesTimeline = memo(function MessagesTimeline({
         row.message.role === "assistant" &&
         (() => {
           const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+          const responseModel =
+            row.message.turnId && responseModelByTurnId.has(row.message.turnId)
+              ? responseModelByTurnId.get(row.message.turnId)
+              : undefined;
+          const responseUsage =
+            row.message.turnId && responseUsageByTurnId.has(row.message.turnId)
+              ? responseUsageByTurnId.get(row.message.turnId)
+              : undefined;
+          const metaParts = formatMessageMetaParts(
+            row.message.createdAt,
+            row.message.streaming
+              ? formatElapsed(row.message.createdAt, nowIso)
+              : formatElapsed(row.message.createdAt, row.message.completedAt),
+            responseModel,
+          );
+          const usageParts = responseUsage ? formatTurnUsageMetaParts(responseUsage) : [];
+          const footerParts = [...metaParts, ...usageParts];
+          const footerBadges = (() => {
+            const occurrenceByPart = new Map<string, number>();
+            return footerParts.map((part) => {
+              const nextCount = (occurrenceByPart.get(part) ?? 0) + 1;
+              occurrenceByPart.set(part, nextCount);
+              return { key: `${part}:${nextCount}`, part };
+            });
+          })();
           return (
             <>
               {row.showCompletionDivider && (
@@ -5588,14 +6078,18 @@ const MessagesTimeline = memo(function MessagesTimeline({
                     </div>
                   );
                 })()}
-                <p className="mt-1.5 text-[10px] text-muted-foreground/30">
-                  {formatMessageMeta(
-                    row.message.createdAt,
-                    row.message.streaming
-                      ? formatElapsed(row.message.createdAt, nowIso)
-                      : formatElapsed(row.message.createdAt, row.message.completedAt),
-                  )}
-                </p>
+                {footerBadges.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] leading-none">
+                    {footerBadges.map((badge) => (
+                      <span
+                        key={`${row.message.id}:meta:${badge.key}`}
+                        className="rounded-md border border-border/60 bg-muted/25 px-1.5 py-1 text-muted-foreground/75"
+                      >
+                        {badge.part}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           );

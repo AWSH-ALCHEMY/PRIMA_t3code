@@ -183,6 +183,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
 
       const turnIdBySource = new Map<string, TurnId>();
       const messageIdBySource = new Map<string, string>();
+      const sourceMessages = command.sourceMessages ?? sourceThread.messages;
+      const sourceProposedPlans = command.sourceProposedPlans ?? sourceThread.proposedPlans;
+      const sourceActivities = command.sourceActivities ?? sourceThread.activities;
+      const sourceCheckpoints = command.sourceCheckpoints ?? sourceThread.checkpoints;
       const remapTurnId = (turnId: TurnId | null): TurnId | null => {
         if (turnId === null) {
           return null;
@@ -219,7 +223,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
 
-      const messageEvents: Array<Omit<OrchestrationEvent, "sequence">> = sourceThread.messages
+      const messageEvents: Array<Omit<OrchestrationEvent, "sequence">> = sourceMessages
         .toSorted(
           (left, right) =>
             left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
@@ -251,31 +255,30 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           };
         });
 
-      const proposedPlanEvents: Array<Omit<OrchestrationEvent, "sequence">> =
-        sourceThread.proposedPlans
-          .toSorted(
-            (left, right) =>
-              left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-          )
-          .map((proposedPlan) => ({
-            ...withEventBase({
-              aggregateKind: "thread",
-              aggregateId: command.threadId,
-              occurredAt: proposedPlan.createdAt,
-              commandId: command.commandId,
-            }),
-            type: "thread.proposed-plan-upserted" as const,
-            payload: {
-              threadId: command.threadId,
-              proposedPlan: {
-                ...proposedPlan,
-                id: crypto.randomUUID() as typeof proposedPlan.id,
-                turnId: remapTurnId(proposedPlan.turnId),
-              },
+      const proposedPlanEvents: Array<Omit<OrchestrationEvent, "sequence">> = sourceProposedPlans
+        .toSorted(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+        )
+        .map((proposedPlan) => ({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: proposedPlan.createdAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.proposed-plan-upserted" as const,
+          payload: {
+            threadId: command.threadId,
+            proposedPlan: {
+              ...proposedPlan,
+              id: crypto.randomUUID() as typeof proposedPlan.id,
+              turnId: remapTurnId(proposedPlan.turnId),
             },
-          }));
+          },
+        }));
 
-      const activityEvents: Array<Omit<OrchestrationEvent, "sequence">> = sourceThread.activities
+      const activityEvents: Array<Omit<OrchestrationEvent, "sequence">> = sourceActivities
         .toSorted((left, right) => {
           if (left.sequence !== undefined && right.sequence !== undefined) {
             if (left.sequence !== right.sequence) {
@@ -306,7 +309,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         }));
 
-      const checkpointEvents: Array<Omit<OrchestrationEvent, "sequence">> = sourceThread.checkpoints
+      const checkpointEvents: Array<Omit<OrchestrationEvent, "sequence">> = sourceCheckpoints
         .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
         .map((checkpoint) => ({
           ...withEventBase({
