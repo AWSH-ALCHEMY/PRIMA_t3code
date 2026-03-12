@@ -251,6 +251,7 @@ export function projectEvent(
           {
             id: payload.threadId,
             projectId: payload.projectId,
+            parentThreadId: payload.parentThreadId ?? null,
             title: payload.title,
             model: payload.model,
             runtimeMode: payload.runtimeMode,

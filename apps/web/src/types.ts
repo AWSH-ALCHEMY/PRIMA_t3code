@@ -87,6 +87,7 @@ export interface Thread {
   id: ThreadId;
   codexThreadId: string | null;
   projectId: ProjectId;
+  parentThreadId: ThreadId | null;
   title: string;
   model: string;
   runtimeMode: RuntimeMode;

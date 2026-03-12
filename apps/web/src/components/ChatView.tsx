@@ -338,6 +338,7 @@ function buildLocalDraftThread(
     id: threadId,
     codexThreadId: null,
     projectId: draftThread.projectId,
+    parentThreadId: null,
     title: "New thread",
     model: fallbackModel,
     runtimeMode: draftThread.runtimeMode,

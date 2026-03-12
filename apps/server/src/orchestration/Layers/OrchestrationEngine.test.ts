@@ -111,6 +111,77 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("forks a thread into a new child thread with copied history", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-fork-create"),
+        projectId: asProjectId("project-fork"),
+        title: "Project Fork",
+        workspaceRoot: "/tmp/project-fork",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-source-create"),
+        threadId: ThreadId.makeUnsafe("thread-fork-source"),
+        projectId: asProjectId("project-fork"),
+        title: "Source thread",
+        model: "gpt-5-codex",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-source-turn"),
+        threadId: ThreadId.makeUnsafe("thread-fork-source"),
+        message: {
+          messageId: asMessageId("msg-fork-source-1"),
+          role: "user",
+          text: "first message",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork"),
+        sourceThreadId: ThreadId.makeUnsafe("thread-fork-source"),
+        threadId: ThreadId.makeUnsafe("thread-fork-child"),
+        title: "Forked thread",
+        createdAt,
+      }),
+    );
+
+    const readModel = await system.run(engine.getReadModel());
+    const sourceThread = readModel.threads.find((thread) => thread.id === "thread-fork-source");
+    const forkThread = readModel.threads.find((thread) => thread.id === "thread-fork-child");
+
+    expect(sourceThread).toBeDefined();
+    expect(forkThread).toBeDefined();
+    expect(forkThread?.parentThreadId).toBe("thread-fork-source");
+    expect(forkThread?.messages.length).toBe(sourceThread?.messages.length);
+    expect(forkThread?.messages[0]?.text).toBe(sourceThread?.messages[0]?.text);
+    expect(forkThread?.messages[0]?.id).not.toBe(sourceThread?.messages[0]?.id);
+    await system.dispose();
+  });
+
   it("replays append-only events from sequence", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

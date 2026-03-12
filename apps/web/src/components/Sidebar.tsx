@@ -753,6 +753,41 @@ export default function Sidebar() {
     ],
   );
 
+  const forkThread = useCallback(
+    async (sourceThreadId: ThreadId): Promise<void> => {
+      const api = readNativeApi();
+      if (!api) return;
+      const sourceThread = threads.find((thread) => thread.id === sourceThreadId);
+      if (!sourceThread) return;
+      const threadId = newThreadId();
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "thread.fork",
+          commandId: newCommandId(),
+          sourceThreadId,
+          threadId,
+          title: `Fork of ${sourceThread.title}`,
+          createdAt: new Date().toISOString(),
+        });
+        if (selectedThreadIds.size > 0) {
+          clearSelection();
+        }
+        setSelectionAnchor(threadId);
+        await navigate({
+          to: "/$threadId",
+          params: { threadId },
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to fork thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+    },
+    [clearSelection, navigate, selectedThreadIds.size, setSelectionAnchor, threads],
+  );
+
   const handleThreadContextMenu = useCallback(
     async (threadId: ThreadId, position: { x: number; y: number }) => {
       const api = readNativeApi();
@@ -760,6 +795,7 @@ export default function Sidebar() {
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
+          { id: "fork", label: "Fork thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "delete", label: "Delete", destructive: true },
@@ -773,6 +809,11 @@ export default function Sidebar() {
         setRenamingThreadId(threadId);
         setRenamingTitle(thread.title);
         renamingCommittedRef.current = false;
+        return;
+      }
+
+      if (clicked === "fork") {
+        await forkThread(threadId);
         return;
       }
 
@@ -811,7 +852,7 @@ export default function Sidebar() {
       }
       await deleteThread(threadId);
     },
-    [appSettings.confirmThreadDelete, deleteThread, markThreadUnread, threads],
+    [appSettings.confirmThreadDelete, deleteThread, forkThread, markThreadUnread, threads],
   );
 
   const handleMultiSelectContextMenu = useCallback(
@@ -1430,12 +1471,54 @@ export default function Sidebar() {
                       if (byDate !== 0) return byDate;
                       return b.id.localeCompare(a.id);
                     });
+                  const projectThreadById = new Map(
+                    projectThreads.map((thread) => [thread.id, thread] as const),
+                  );
+                  const childThreadsByParent = new Map<ThreadId, typeof projectThreads>();
+                  const rootThreads: typeof projectThreads = [];
+                  for (const thread of projectThreads) {
+                    if (
+                      thread.parentThreadId !== null &&
+                      projectThreadById.has(thread.parentThreadId)
+                    ) {
+                      const siblings = childThreadsByParent.get(thread.parentThreadId) ?? [];
+                      siblings.push(thread);
+                      childThreadsByParent.set(thread.parentThreadId, siblings);
+                    } else {
+                      rootThreads.push(thread);
+                    }
+                  }
+                  const orderedThreadRows: Array<{
+                    thread: (typeof projectThreads)[number];
+                    depth: number;
+                  }> = [];
+                  const visited = new Set<ThreadId>();
+                  const appendThread = (
+                    thread: (typeof projectThreads)[number],
+                    depth: number,
+                  ): void => {
+                    if (visited.has(thread.id)) {
+                      return;
+                    }
+                    visited.add(thread.id);
+                    orderedThreadRows.push({ thread, depth });
+                    const childThreads = childThreadsByParent.get(thread.id) ?? [];
+                    for (const child of childThreads) {
+                      appendThread(child, depth + 1);
+                    }
+                  };
+                  for (const rootThread of rootThreads) {
+                    appendThread(rootThread, 0);
+                  }
+                  for (const thread of projectThreads) {
+                    appendThread(thread, 0);
+                  }
                   const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
-                  const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
-                  const visibleThreads =
+                  const hasHiddenThreads = orderedThreadRows.length > THREAD_PREVIEW_LIMIT;
+                  const visibleThreadRows =
                     hasHiddenThreads && !isThreadListExpanded
-                      ? projectThreads.slice(0, THREAD_PREVIEW_LIMIT)
-                      : projectThreads;
+                      ? orderedThreadRows.slice(0, THREAD_PREVIEW_LIMIT)
+                      : orderedThreadRows;
                   const orderedProjectThreadIds = projectThreads.map((t) => t.id);
 
                   return (
@@ -1502,7 +1585,8 @@ export default function Sidebar() {
 
                           <CollapsibleContent keepMounted>
                             <SidebarMenuSub className="mx-1 my-0 w-full translate-x-0 gap-0.5 px-1.5 py-0">
-                              {visibleThreads.map((thread) => {
+                              {visibleThreadRows.map((threadRow) => {
+                                const { thread, depth } = threadRow;
                                 const isActive = routeThreadId === thread.id;
                                 const isSelected = selectedThreadIds.has(thread.id);
                                 const isHighlighted = isActive || isSelected;
@@ -1578,7 +1662,15 @@ export default function Sidebar() {
                                         }
                                       }}
                                     >
-                                      <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+                                      <div
+                                        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                                        style={{ paddingLeft: `${depth * 12}px` }}
+                                      >
+                                        {depth > 0 && (
+                                          <span className="text-[10px] text-muted-foreground/45">
+                                            fork
+                                          </span>
+                                        )}
                                         {prStatus && (
                                           <Tooltip>
                                             <TooltipTrigger

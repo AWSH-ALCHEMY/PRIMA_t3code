@@ -155,6 +155,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          parent_thread_id AS "parentThreadId",
           title,
           model,
           runtime_mode AS "runtimeMode",
@@ -527,6 +528,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const threads: Array<OrchestrationThread> = threadRows.map((row) => ({
             id: row.threadId,
             projectId: row.projectId,
+            parentThreadId: row.parentThreadId,
             title: row.title,
             model: row.model,
             runtimeMode: row.runtimeMode,

@@ -2,6 +2,7 @@ import type {
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationReadModel,
+  TurnId,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 
@@ -155,6 +156,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
+          parentThreadId: command.parentThreadId ?? null,
           title: command.title,
           model: command.model,
           runtimeMode: command.runtimeMode,
@@ -165,6 +167,179 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.fork": {
+      const sourceThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.sourceThreadId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+
+      const turnIdBySource = new Map<string, TurnId>();
+      const messageIdBySource = new Map<string, string>();
+      const remapTurnId = (turnId: TurnId | null): TurnId | null => {
+        if (turnId === null) {
+          return null;
+        }
+        const existing = turnIdBySource.get(turnId);
+        if (existing) {
+          return existing;
+        }
+        const next = crypto.randomUUID() as TurnId;
+        turnIdBySource.set(turnId, next);
+        return next;
+      };
+
+      const threadCreatedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.created",
+        payload: {
+          threadId: command.threadId,
+          projectId: sourceThread.projectId,
+          parentThreadId: sourceThread.id,
+          title: command.title ?? `Fork of ${sourceThread.title}`,
+          model: sourceThread.model,
+          runtimeMode: sourceThread.runtimeMode,
+          interactionMode: sourceThread.interactionMode,
+          branch: sourceThread.branch,
+          worktreePath: sourceThread.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+
+      const messageEvents: Array<Omit<OrchestrationEvent, "sequence">> = sourceThread.messages
+        .toSorted(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+        )
+        .map((message) => {
+          const nextMessageId = crypto.randomUUID() as typeof message.id;
+          messageIdBySource.set(message.id, nextMessageId);
+          return {
+            ...withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: message.createdAt,
+              commandId: command.commandId,
+            }),
+            type: "thread.message-sent" as const,
+            payload: {
+              threadId: command.threadId,
+              messageId: nextMessageId,
+              role: message.role,
+              text: message.text,
+              ...(message.attachments
+                ? { attachments: message.attachments.map((a) => ({ ...a })) }
+                : {}),
+              turnId: remapTurnId(message.turnId),
+              streaming: message.streaming,
+              createdAt: message.createdAt,
+              updatedAt: message.updatedAt,
+            },
+          };
+        });
+
+      const proposedPlanEvents: Array<Omit<OrchestrationEvent, "sequence">> =
+        sourceThread.proposedPlans
+          .toSorted(
+            (left, right) =>
+              left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+          )
+          .map((proposedPlan) => ({
+            ...withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: proposedPlan.createdAt,
+              commandId: command.commandId,
+            }),
+            type: "thread.proposed-plan-upserted" as const,
+            payload: {
+              threadId: command.threadId,
+              proposedPlan: {
+                ...proposedPlan,
+                id: crypto.randomUUID() as typeof proposedPlan.id,
+                turnId: remapTurnId(proposedPlan.turnId),
+              },
+            },
+          }));
+
+      const activityEvents: Array<Omit<OrchestrationEvent, "sequence">> = sourceThread.activities
+        .toSorted((left, right) => {
+          if (left.sequence !== undefined && right.sequence !== undefined) {
+            if (left.sequence !== right.sequence) {
+              return left.sequence - right.sequence;
+            }
+          } else if (left.sequence !== undefined) {
+            return 1;
+          } else if (right.sequence !== undefined) {
+            return -1;
+          }
+          return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+        })
+        .map((activity) => ({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: activity.createdAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.activity-appended" as const,
+          payload: {
+            threadId: command.threadId,
+            activity: {
+              ...activity,
+              id: crypto.randomUUID() as typeof activity.id,
+              turnId: remapTurnId(activity.turnId),
+            },
+          },
+        }));
+
+      const checkpointEvents: Array<Omit<OrchestrationEvent, "sequence">> = sourceThread.checkpoints
+        .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
+        .map((checkpoint) => ({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: checkpoint.completedAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.turn-diff-completed" as const,
+          payload: {
+            threadId: command.threadId,
+            turnId: remapTurnId(checkpoint.turnId) ?? checkpoint.turnId,
+            checkpointTurnCount: checkpoint.checkpointTurnCount,
+            checkpointRef: checkpoint.checkpointRef,
+            status: checkpoint.status,
+            files: checkpoint.files.map((file) => ({ ...file })),
+            assistantMessageId:
+              checkpoint.assistantMessageId === null
+                ? null
+                : ((messageIdBySource.get(checkpoint.assistantMessageId) ?? null) as
+                    | typeof checkpoint.assistantMessageId
+                    | null),
+            completedAt: checkpoint.completedAt,
+          },
+        }));
+
+      return [
+        threadCreatedEvent,
+        ...messageEvents,
+        ...proposedPlanEvents,
+        ...activityEvents,
+        ...checkpointEvents,
+      ];
     }
 
     case "thread.delete": {
