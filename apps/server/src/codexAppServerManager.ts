@@ -152,6 +152,7 @@ const CODEX_STDERR_LOG_REGEX =
   /^\d{4}-\d{2}-\d{2}T\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\s+\S+:\s+(.*)$/;
 const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db missing rollout path for thread",
+  "state db returned stale rollout path for thread",
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
@@ -585,7 +586,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
 
-      await this.sendRequest(context, "initialize", buildCodexInitializeParams());
+      await this.sendRequest(context, "initialize", buildCodexInitializeParams(), 60_000);
 
       this.writeMessage(context, { method: "initialized" });
       try {
@@ -1512,19 +1513,35 @@ function normalizeProviderThreadId(value: string | undefined): string | undefine
   return brandIfNonEmpty(value, (normalized) => normalized);
 }
 
-function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
+export function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
   readonly binaryPath?: string;
   readonly homePath?: string;
   readonly profile?: string;
 } {
   const options = input.providerOptions?.codex;
+  const envBinaryPath = process.env.T3CODE_CODEX_BINARY_PATH ?? process.env.CODEX_BINARY_PATH;
+  const envHomePath = process.env.T3CODE_CODEX_HOME_PATH;
+  const envProfile = process.env.T3CODE_CODEX_PROFILE ?? process.env.CODEX_PROFILE;
+
   if (!options) {
-    return {};
+    return {
+      ...(envBinaryPath ? { binaryPath: envBinaryPath } : {}),
+      ...(envHomePath ? { homePath: envHomePath } : {}),
+      ...(envProfile ? { profile: envProfile } : {}),
+    };
   }
   return {
-    ...(options.binaryPath ? { binaryPath: options.binaryPath } : {}),
-    ...(options.homePath ? { homePath: options.homePath } : {}),
-    ...(options.profile ? { profile: options.profile } : {}),
+    ...(options.binaryPath
+      ? { binaryPath: options.binaryPath }
+      : envBinaryPath
+        ? { binaryPath: envBinaryPath }
+        : {}),
+    ...(options.homePath
+      ? { homePath: options.homePath }
+      : envHomePath
+        ? { homePath: envHomePath }
+        : {}),
+    ...(options.profile ? { profile: options.profile } : envProfile ? { profile: envProfile } : {}),
   };
 }
 

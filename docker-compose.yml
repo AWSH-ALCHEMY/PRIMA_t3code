@@ -1,0 +1,105 @@
+services:
+  t3-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUN_VERSION: "1.3.9"
+        CODEX_NPM_VERSION: "latest"
+    image: t3code-dev:local
+    container_name: t3code-dev
+    working_dir: /workspace
+    user: root
+    command:
+      - bash
+      - -lc
+      - |
+        mkdir -p /home/dev/.t3-dev/state /home/dev/.codex
+        chown -R dev:dev /home/dev/.t3-dev /home/dev/.codex
+        if [ -f /proxy-certs/ca.crt ]; then
+          cp /proxy-certs/ca.crt /usr/local/share/ca-certificates/t3-proxy-ca.crt
+          update-ca-certificates
+        fi
+        exec su -s /bin/bash dev -c '
+          set -euo pipefail
+          cd /workspace
+          if [ -n "$${T3CODE_CODEX_PROXY_BASE_URL:-}" ]; then
+            mkdir -p /home/dev/.codex
+            if [ -f /home/dev/.codex/config.toml ]; then
+              cp /home/dev/.codex/config.toml "/home/dev/.codex/config.toml.bak.$$(date +%s)"
+            fi
+            PROXY_PROVIDER_ID="$${T3CODE_CODEX_PROXY_PROVIDER_ID:-proxy_gateway}"
+            PROXY_PROFILE="$${T3CODE_CODEX_PROXY_PROFILE:-proxy}"
+            PROXY_KEY_ENV="$${T3CODE_CODEX_PROXY_API_KEY_ENV:-T3CODE_CODEX_PROXY_API_KEY}"
+            PROXY_WIRE_API="$${T3CODE_CODEX_PROXY_WIRE_API:-responses}"
+            CONFIG_PATH="/home/dev/.codex/config.toml"
+            printf "model_provider = \"%s\"\n\n" "$${PROXY_PROVIDER_ID}" > "$${CONFIG_PATH}"
+            printf "[model_providers.%s]\n" "$${PROXY_PROVIDER_ID}" >> "$${CONFIG_PATH}"
+            printf "name = \"Proxy Gateway\"\n" >> "$${CONFIG_PATH}"
+            printf "base_url = \"%s\"\n" "$${T3CODE_CODEX_PROXY_BASE_URL}" >> "$${CONFIG_PATH}"
+            printf "wire_api = \"%s\"\n" "$${PROXY_WIRE_API}" >> "$${CONFIG_PATH}"
+            printf "env_key = \"%s\"\n" "$${PROXY_KEY_ENV}" >> "$${CONFIG_PATH}"
+
+            if [ -n "$${T3CODE_CODEX_PROXY_MODEL_CATALOG_JSON:-}" ]; then
+              printf "model_catalog_json = \"%s\"\n" "$${T3CODE_CODEX_PROXY_MODEL_CATALOG_JSON}" >> "$${CONFIG_PATH}"
+            fi
+
+            printf "\n[profiles.%s]\n" "$${PROXY_PROFILE}" >> "$${CONFIG_PATH}"
+            printf "model_provider = \"%s\"\n" "$${PROXY_PROVIDER_ID}" >> "$${CONFIG_PATH}"
+
+            if [ -n "$${T3CODE_CODEX_PROXY_MODEL:-}" ]; then
+              printf "model = \"%s\"\n" "$${T3CODE_CODEX_PROXY_MODEL}" >> "$${CONFIG_PATH}"
+            fi
+          fi
+          bun install
+          bun run --cwd packages/contracts build
+          bun run --cwd apps/server dev &
+          SERVER_PID=$$!
+          npm --workspace @t3tools/web run dev -- --host 0.0.0.0 --port 5733 &
+          WEB_PID=$$!
+          trap "kill $$SERVER_PID $$WEB_PID" INT TERM EXIT
+          wait -n $$SERVER_PID $$WEB_PID
+        '
+    ports:
+      - "${T3CODE_DOCKER_WEB_PORT:-15733}:5733"
+      - "${T3CODE_DOCKER_SERVER_PORT:-13773}:3773"
+    networks:
+      - default
+      - proxy-network
+    environment:
+      CODEX_HOME: /home/dev/.codex
+      T3CODE_CODEX_HOME_PATH: /home/dev/.codex
+      T3CODE_CODEX_PROFILE: "${T3CODE_CODEX_PROFILE:-}"
+      T3CODE_CODEX_PROXY_BASE_URL: "${T3CODE_CODEX_PROXY_BASE_URL:-}"
+      T3CODE_CODEX_PROXY_API_KEY: "${T3CODE_CODEX_PROXY_API_KEY:-}"
+      T3CODE_CODEX_PROXY_API_KEY_ENV: "${T3CODE_CODEX_PROXY_API_KEY_ENV:-T3CODE_CODEX_PROXY_API_KEY}"
+      T3CODE_CODEX_PROXY_PROVIDER_ID: "${T3CODE_CODEX_PROXY_PROVIDER_ID:-proxy_gateway}"
+      T3CODE_CODEX_PROXY_PROFILE: "${T3CODE_CODEX_PROXY_PROFILE:-proxy}"
+      T3CODE_CODEX_PROXY_WIRE_API: "${T3CODE_CODEX_PROXY_WIRE_API:-responses}"
+      T3CODE_CODEX_PROXY_MODEL: "${T3CODE_CODEX_PROXY_MODEL:-}"
+      T3CODE_CODEX_PROXY_MODEL_CATALOG_JSON: "${T3CODE_CODEX_PROXY_MODEL_CATALOG_JSON:-}"
+      T3CODE_STATE_DIR: /home/dev/.t3-dev/state
+      T3CODE_PORT: "3773"
+      T3CODE_NO_BROWSER: "1"
+      VITE_WS_URL: "ws://localhost:${T3CODE_DOCKER_SERVER_PORT:-13773}"
+      VITE_DEV_SERVER_URL: "http://localhost:${T3CODE_DOCKER_WEB_PORT:-15733}"
+      CHOKIDAR_USEPOLLING: "1"
+      WATCHPACK_POLLING: "true"
+      T3CODE_HOST: 0.0.0.0
+      VITE_HOST: 0.0.0.0
+    volumes:
+      - ./:/workspace
+      - "${T3CODE_PROXY_CERTS_DIR:-../fucking_api_proxy/certs}:/proxy-certs:ro"
+      - t3code_dev_codex_home:/home/dev/.codex
+      - t3code_dev_state:/home/dev/.t3-dev
+    stdin_open: true
+    tty: true
+
+volumes:
+  t3code_dev_codex_home:
+  t3code_dev_state:
+
+networks:
+  proxy-network:
+    external: true
+    name: fucking_api_proxy_proxy-network

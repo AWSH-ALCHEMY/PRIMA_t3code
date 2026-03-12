@@ -366,7 +366,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const availableEditors = resolveAvailableEditors();
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const codexConfigModels = yield* Effect.gen(function* () {
+  const loadCodexConfigModels = Effect.fnUntraced(function* () {
     const codexHome = process.env.CODEX_HOME ?? path.join(OS.homedir(), ".codex");
     const configPath = path.join(codexHome, "config.toml");
     const configContent = yield* fileSystem
@@ -411,7 +411,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ),
   );
 
-  const providerStatuses = yield* providerHealth.getStatuses;
+  const loadProviderStatuses = providerHealth.getStatuses;
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
@@ -755,9 +755,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Stream.runForEach(keybindingsManager.streamChanges, (event) =>
-    pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
-      issues: event.issues,
-      providers: providerStatuses,
+    Effect.gen(function* () {
+      const providerStatuses = yield* loadProviderStatuses;
+      return yield* pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+        issues: event.issues,
+        providers: providerStatuses,
+      });
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
@@ -1011,6 +1014,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.serverGetConfig:
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
+        const codexConfigModels = yield* loadCodexConfigModels();
+        const providerStatuses = yield* loadProviderStatuses;
         return {
           cwd,
           keybindingsConfigPath,

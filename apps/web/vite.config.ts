@@ -5,6 +5,7 @@ import { defineConfig } from "vite";
 import { version } from "./package.json" with { type: "json" };
 
 const port = Number(process.env.PORT ?? 5733);
+const host = process.env.VITE_HOST?.trim() || "localhost";
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 
 const buildSourcemap =
@@ -36,6 +37,7 @@ export default defineConfig({
     tsconfigPaths: true,
   },
   server: {
+    host,
     port,
     strictPort: true,
     hmr: {

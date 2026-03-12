@@ -13,6 +13,7 @@ import {
   classifyCodexStderrLine,
   isRecoverableThreadResumeError,
   normalizeCodexModelSlug,
+  readCodexProviderOptions,
   readCodexAccountSnapshot,
   resolveCodexModelForAccount,
 } from "./codexAppServerManager";
@@ -180,6 +181,91 @@ describe("normalizeCodexModelSlug", () => {
   it("keeps non-aliased models as-is", () => {
     expect(normalizeCodexModelSlug("gpt-5.2-codex")).toBe("gpt-5.2-codex");
     expect(normalizeCodexModelSlug("gpt-5.2")).toBe("gpt-5.2");
+  });
+});
+
+describe("readCodexProviderOptions", () => {
+  it("uses environment defaults when provider options are missing", () => {
+    const previousBinary = process.env.T3CODE_CODEX_BINARY_PATH;
+    const previousHome = process.env.T3CODE_CODEX_HOME_PATH;
+    const previousProfile = process.env.T3CODE_CODEX_PROFILE;
+    process.env.T3CODE_CODEX_BINARY_PATH = "/usr/local/bin/codex-proxy";
+    process.env.T3CODE_CODEX_HOME_PATH = "/tmp/codex-home";
+    process.env.T3CODE_CODEX_PROFILE = "proxy-profile";
+
+    try {
+      expect(
+        readCodexProviderOptions({
+          threadId: asThreadId("thread_1"),
+          runtimeMode: "full-access",
+        }),
+      ).toEqual({
+        binaryPath: "/usr/local/bin/codex-proxy",
+        homePath: "/tmp/codex-home",
+        profile: "proxy-profile",
+      });
+    } finally {
+      if (previousBinary === undefined) {
+        delete process.env.T3CODE_CODEX_BINARY_PATH;
+      } else {
+        process.env.T3CODE_CODEX_BINARY_PATH = previousBinary;
+      }
+      if (previousHome === undefined) {
+        delete process.env.T3CODE_CODEX_HOME_PATH;
+      } else {
+        process.env.T3CODE_CODEX_HOME_PATH = previousHome;
+      }
+      if (previousProfile === undefined) {
+        delete process.env.T3CODE_CODEX_PROFILE;
+      } else {
+        process.env.T3CODE_CODEX_PROFILE = previousProfile;
+      }
+    }
+  });
+
+  it("prefers explicit provider options over environment defaults", () => {
+    const previousBinary = process.env.T3CODE_CODEX_BINARY_PATH;
+    const previousHome = process.env.T3CODE_CODEX_HOME_PATH;
+    const previousProfile = process.env.T3CODE_CODEX_PROFILE;
+    process.env.T3CODE_CODEX_BINARY_PATH = "/usr/local/bin/codex-proxy";
+    process.env.T3CODE_CODEX_HOME_PATH = "/tmp/codex-home";
+    process.env.T3CODE_CODEX_PROFILE = "proxy-profile";
+
+    try {
+      expect(
+        readCodexProviderOptions({
+          threadId: asThreadId("thread_1"),
+          runtimeMode: "full-access",
+          providerOptions: {
+            codex: {
+              binaryPath: "/Applications/Codex.app/Contents/Resources/codex",
+              homePath: "/Users/dev/.codex",
+              profile: "my-profile",
+            },
+          },
+        }),
+      ).toEqual({
+        binaryPath: "/Applications/Codex.app/Contents/Resources/codex",
+        homePath: "/Users/dev/.codex",
+        profile: "my-profile",
+      });
+    } finally {
+      if (previousBinary === undefined) {
+        delete process.env.T3CODE_CODEX_BINARY_PATH;
+      } else {
+        process.env.T3CODE_CODEX_BINARY_PATH = previousBinary;
+      }
+      if (previousHome === undefined) {
+        delete process.env.T3CODE_CODEX_HOME_PATH;
+      } else {
+        process.env.T3CODE_CODEX_HOME_PATH = previousHome;
+      }
+      if (previousProfile === undefined) {
+        delete process.env.T3CODE_CODEX_PROFILE;
+      } else {
+        process.env.T3CODE_CODEX_PROFILE = previousProfile;
+      }
+    }
   });
 });
 

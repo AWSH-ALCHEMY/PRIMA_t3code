@@ -14,7 +14,7 @@ import type {
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
-import { Array, Effect, Fiber, FileSystem, Layer, Option, Path, Result, Stream } from "effect";
+import { Array, Effect, FileSystem, Layer, Option, Path, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -395,13 +395,30 @@ export const checkCodexProviderStatus: Effect.Effect<
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
-    const codexStatusFiber = yield* checkCodexProviderStatus.pipe(
-      Effect.map(Array.of),
-      Effect.forkScoped,
+    const runtimeServices = yield* Effect.services<
+      ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+    >();
+    const runPromise = Effect.runPromiseWith(runtimeServices);
+
+    const getStatuses = Effect.promise(() =>
+      runPromise(checkCodexProviderStatus.pipe(Effect.map(Array.of))),
+    ).pipe(
+      Effect.catch((cause) =>
+        Effect.succeed([
+          {
+            provider: CODEX_PROVIDER,
+            status: "warning" as const,
+            available: true,
+            authStatus: "unknown" as const,
+            checkedAt: new Date().toISOString(),
+            message: `Could not verify Codex authentication status. ${String(cause)}`,
+          },
+        ] satisfies ReadonlyArray<ServerProviderStatus>),
+      ),
     );
 
     return {
-      getStatuses: Fiber.join(codexStatusFiber),
+      getStatuses,
     } satisfies ProviderHealthShape;
   }),
 );
