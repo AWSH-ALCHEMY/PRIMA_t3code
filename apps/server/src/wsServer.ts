@@ -177,7 +177,7 @@ function parseCodexConfig(content: string): ParsedCodexConfig {
   const modelCatalogPaths: string[] = [];
   const seenModels = new Set<string>();
   const seenCatalogPaths = new Set<string>();
-  let section: "top" | "profile" | "provider" | "other" = "top";
+  let section: "top" | "profile" | "other" = "top";
 
   for (const rawLine of content.split("\n")) {
     const withoutComment = rawLine.split("#")[0]?.trim() ?? "";
@@ -191,11 +191,7 @@ function parseCodexConfig(content: string): ParsedCodexConfig {
         section = "other";
         continue;
       }
-      section = sectionName.startsWith("profiles.")
-        ? "profile"
-        : sectionName.startsWith("model_providers.")
-          ? "provider"
-          : "other";
+      section = sectionName.startsWith("profiles.") ? "profile" : "other";
       continue;
     }
 
@@ -204,11 +200,22 @@ function parseCodexConfig(content: string): ParsedCodexConfig {
       addUniqueString(models, seenModels, modelMatch[1]);
     }
 
-    const modelCatalogPathMatch = withoutComment.match(
-      /^model_catalog_json\s*=\s*["']([^"']+)["']$/,
+    // Support dotted key syntax (for example: `profiles.work.model = "gpt-5"`).
+    const dottedProfileModelMatch = withoutComment.match(
+      /^profiles\.[^.]+\.model\s*=\s*["']([^"']+)["']$/,
     );
-    if (section === "provider" && modelCatalogPathMatch?.[1]) {
-      addUniqueString(modelCatalogPaths, seenCatalogPaths, modelCatalogPathMatch[1]);
+    if (dottedProfileModelMatch?.[1]) {
+      addUniqueString(models, seenModels, dottedProfileModelMatch[1]);
+    }
+
+    // Discover `model_catalog_json` from any valid key shape:
+    // - `[model_providers.<id>]` tables
+    // - `model_providers.<id>.model_catalog_json = "..."`
+    // - inline tables like `model_providers = { x = { model_catalog_json = "..." } }`
+    for (const match of withoutComment.matchAll(/model_catalog_json\s*=\s*["']([^"']+)["']/g)) {
+      if (match[1]) {
+        addUniqueString(modelCatalogPaths, seenCatalogPaths, match[1]);
+      }
     }
   }
 

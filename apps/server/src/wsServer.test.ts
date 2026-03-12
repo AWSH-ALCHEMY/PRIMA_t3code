@@ -847,16 +847,16 @@ describe("WebSocket Server", () => {
       [
         'model = "gpt-5.3-codex"',
         "",
-        "[model_providers.proxy_gateway]",
-        'model_catalog_json = "models_cache.proxy.generated.json"',
+        "[model_providers.custom_provider]",
+        'model_catalog_json = "models_cache.custom.generated.json"',
         "",
-        "[profiles.crofai]",
+        "[profiles.default]",
         'model = "kimi-k2.5"',
       ].join("\n"),
       "utf8",
     );
     fs.writeFileSync(
-      path.join(codexHome, "models_cache.proxy.generated.json"),
+      path.join(codexHome, "models_cache.custom.generated.json"),
       JSON.stringify({
         models: [
           { slug: "gpt-5-logging" },
@@ -885,6 +885,70 @@ describe("WebSocket Server", () => {
       expect(response.result).toEqual(
         expect.objectContaining({
           codexConfigModels: ["gpt-5.3-codex", "kimi-k2.5", "gpt-5-logging", "glm-5"],
+        }),
+      );
+    } finally {
+      if (previousCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = previousCodexHome;
+      }
+    }
+  });
+
+  it("loads model catalog paths from dotted and inline provider config entries", async () => {
+    const stateDir = makeTempDir("t3code-state-get-config-catalog-dynamic-");
+    const keybindingsPath = path.join(stateDir, "keybindings.json");
+    fs.writeFileSync(keybindingsPath, "[]", "utf8");
+
+    const codexHome = makeTempDir("t3code-codex-home-dynamic-");
+    fs.writeFileSync(
+      path.join(codexHome, "config.toml"),
+      [
+        'model = "gpt-5.3-codex"',
+        'profiles.experimental.model = "qwen3-coder"',
+        'model_providers.custom_provider.model_catalog_json = "catalog-a.json"',
+        'model_providers = { backup = { model_catalog_json = "catalog-b.json" } }',
+      ].join("\n"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(codexHome, "catalog-a.json"),
+      JSON.stringify({
+        models: [{ slug: "glm-5" }, { slug: "deepseek-v3.2" }],
+      }),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(codexHome, "catalog-b.json"),
+      JSON.stringify({
+        models: [{ slug: "deepseek-v3.2" }, { slug: "minimax-m2.1" }],
+      }),
+      "utf8",
+    );
+
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+
+    try {
+      server = await createTestServer({ cwd: "/my/workspace", stateDir });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const [ws] = await connectAndAwaitWelcome(port);
+      connections.push(ws);
+
+      const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
+      expect(response.error).toBeUndefined();
+      expect(response.result).toEqual(
+        expect.objectContaining({
+          codexConfigModels: [
+            "gpt-5.3-codex",
+            "qwen3-coder",
+            "glm-5",
+            "deepseek-v3.2",
+            "minimax-m2.1",
+          ],
         }),
       );
     } finally {

@@ -324,7 +324,7 @@ describe("ProviderCommandReactor", () => {
         },
         providerOptions: {
           codex: {
-            profile: "crofai",
+            profile: "team-profile",
           },
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -345,7 +345,7 @@ describe("ProviderCommandReactor", () => {
       },
       providerOptions: {
         codex: {
-          profile: "crofai",
+          profile: "team-profile",
         },
       },
     });
@@ -379,7 +379,7 @@ describe("ProviderCommandReactor", () => {
         provider: "codex",
         providerOptions: {
           codex: {
-            profile: "crofai",
+            profile: "team-profile",
           },
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,

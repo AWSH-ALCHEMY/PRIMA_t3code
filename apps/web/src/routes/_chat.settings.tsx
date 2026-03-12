@@ -287,11 +287,11 @@ function SettingsRouteView() {
                     id="codex-profile"
                     value={codexProfile}
                     onChange={(event) => updateSettings({ codexProfile: event.target.value })}
-                    placeholder="crofai"
+                    placeholder="my-profile"
                     spellCheck={false}
                   />
                   <span className="text-xs text-muted-foreground">
-                    Optional profile passed as <code>-p</code> to Codex app-server.
+                    Optional Codex config profile used when launching app-server.
                   </span>
                 </label>
 

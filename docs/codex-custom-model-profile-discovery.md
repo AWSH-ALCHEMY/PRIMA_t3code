@@ -2,7 +2,7 @@
 
 ## Experiment Question
 
-Why does Codex in T3 ignore `model_catalog_json`/custom models even when profile `crofai` is set in settings?
+Why does Codex in T3 ignore `model_catalog_json`/custom models even when a non-default profile is set in settings?
 
 ## Initial Hypotheses
 
@@ -45,7 +45,7 @@ Result:
 ### D) Validate alternate launch form
 
 - Ran:
-  - `/Applications/Codex.app/Contents/Resources/codex -c 'profile="crofai"' app-server`
+  - `/Applications/Codex.app/Contents/Resources/codex -c 'profile="<your-profile>"' app-server`
 
 Result:
 
@@ -66,7 +66,7 @@ Result:
 
 - `thread.turn-start-requested` included:
   - `model: "glm-5"`
-  - `providerOptions.codex.profile: "crofai"`
+  - `providerOptions.codex.profile: "<your-profile>"`
 - Assistant output returned expected token:
   - `MODEL_OK`
 - UI model picker showed profile-backed custom models.
@@ -77,9 +77,8 @@ T3-side profile support was largely correct, but Codex app-server needed profile
 
 ## Remaining Gaps / Follow-ups
 
-1. Settings helper text still references `-p`; update copy to avoid confusion.
-2. Add automated regression test in server layer for spawn arg shape when profile is set.
-3. Consider surfacing active model provider/model in UI diagnostics panel for faster debugging.
+1. Add automated regression test in server layer for spawn arg shape when profile is set.
+2. Consider surfacing active model provider/model in UI diagnostics panel for faster debugging.
 
 ## Recreate This Discovery Quickly
 

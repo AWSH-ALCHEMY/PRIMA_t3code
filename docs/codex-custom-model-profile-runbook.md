@@ -10,7 +10,7 @@ Enable T3 Code to launch Codex app-server with a user-selected Codex profile so 
 - T3 server/web dev mode
 - Codex binary: `/Applications/Codex.app/Contents/Resources/codex`
 - `CODEX_HOME`: `/Users/code/.codex`
-- Profile: `crofai`
+- Profile: `<your-profile>`
 
 ## Problem Summary
 
@@ -68,11 +68,11 @@ File:
 
 Command style tested:
 
-- `/Applications/Codex.app/Contents/Resources/codex -c 'profile="crofai"' app-server`
+- `/Applications/Codex.app/Contents/Resources/codex -c 'profile="<your-profile>"' app-server`
 
 Validated:
 
-- `thread/start` resolved provider/model from profile (`proxy_gateway`, custom model).
+- `thread/start` resolved provider/model from profile-defined settings.
 - Non-default model turn succeeded.
 
 ### T3 end-to-end proof (WebSocket orchestration path)
@@ -80,23 +80,17 @@ Validated:
 Dispatched `thread.turn.start` with:
 
 - `model: "glm-5"`
-- `providerOptions.codex.profile: "crofai"`
+- `providerOptions.codex.profile: "<your-profile>"`
 - binary/home overrides above
 
 Validated from T3 events:
 
-- `thread.turn-start-requested` carried `model: "glm-5"` and profile `crofai`.
+- `thread.turn-start-requested` carried `model: "glm-5"` and the selected profile.
 - Assistant response returned `MODEL_OK`.
 
 ### UI proof
 
-From model picker in chat UI, custom profile-backed models appeared (examples observed):
-
-- `kimi-k2.5`
-- `glm-5`
-- `qwen3-coder`
-- `deepseek-v3.2`
-- `minimax-m2.1`
+From model picker in chat UI, profile-backed custom models appeared.
 
 ## Reproduction Steps
 
@@ -105,7 +99,7 @@ From model picker in chat UI, custom profile-backed models appeared (examples ob
 2. Open Settings in UI and set:
    - Codex binary path: `/Applications/Codex.app/Contents/Resources/codex`
    - `CODEX_HOME`: `/Users/code/.codex`
-   - Codex profile: `crofai`
+   - Codex profile: `<your-profile>`
 3. Open a thread.
 4. In model picker, choose a custom model (for example `glm-5` or `kimi-k2.5`).
 5. Send prompt: `Reply with exactly MODEL_OK`.
@@ -115,7 +109,6 @@ From model picker in chat UI, custom profile-backed models appeared (examples ob
 
 - If browser shows `ERR_CONNECTION_REFUSED` on `localhost:5733`, dev process is not running.
 - If profile change does not apply, start a new turn (reactor restarts provider session when provider options differ).
-- Settings helper text may still mention `-p`; runtime now uses `-c profile=...`.
 
 ## Rollback
 
