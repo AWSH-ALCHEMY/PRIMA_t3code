@@ -205,6 +205,7 @@ import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import {
   getAppModelOptions,
+  isCustomModelSelection,
   normalizeCustomModelSlugs,
   resolveAppModelSelection,
   useAppSettings,
@@ -917,18 +918,33 @@ export default function ChatView({ threadId }: ChatViewProps) {
     };
     return Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : undefined;
   }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
+  const includeCodexProfileForDispatch = useMemo(() => {
+    if (selectedProvider !== "codex") {
+      return false;
+    }
+    if (!settings.codexProfile.trim()) {
+      return false;
+    }
+    return isCustomModelSelection("codex", customModelsForSelectedProvider, selectedModel);
+  }, [customModelsForSelectedProvider, selectedModel, selectedProvider, settings.codexProfile]);
   const providerOptionsForDispatch = useMemo(() => {
-    if (!settings.codexBinaryPath && !settings.codexHomePath && !settings.codexProfile) {
+    const codexProfileForDispatch = includeCodexProfileForDispatch ? settings.codexProfile : "";
+    if (!settings.codexBinaryPath && !settings.codexHomePath && !codexProfileForDispatch) {
       return undefined;
     }
     return {
       codex: {
         ...(settings.codexBinaryPath ? { binaryPath: settings.codexBinaryPath } : {}),
         ...(settings.codexHomePath ? { homePath: settings.codexHomePath } : {}),
-        ...(settings.codexProfile ? { profile: settings.codexProfile } : {}),
+        ...(codexProfileForDispatch ? { profile: codexProfileForDispatch } : {}),
       },
     };
-  }, [settings.codexBinaryPath, settings.codexHomePath, settings.codexProfile]);
+  }, [
+    includeCodexProfileForDispatch,
+    settings.codexBinaryPath,
+    settings.codexHomePath,
+    settings.codexProfile,
+  ]);
   const selectedModelForPicker = selectedModel;
   const modelOptionsByProvider = useMemo(
     () =>

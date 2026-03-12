@@ -146,6 +146,22 @@ export function resolveAppModelSelection(
   );
 }
 
+export function isCustomModelSelection(
+  provider: ProviderKind,
+  customModels: readonly string[],
+  selectedModel: string | null | undefined,
+): boolean {
+  const normalizedSelectedModel = normalizeModelSlug(selectedModel, provider);
+  if (!normalizedSelectedModel) {
+    return false;
+  }
+
+  const option = getAppModelOptions(provider, customModels, normalizedSelectedModel).find(
+    (candidate) => candidate.slug === normalizedSelectedModel,
+  );
+  return option?.isCustom ?? false;
+}
+
 export function getSlashModelOptions(
   provider: ProviderKind,
   customModels: readonly string[],

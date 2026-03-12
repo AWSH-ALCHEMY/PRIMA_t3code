@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   getAppModelOptions,
   getSlashModelOptions,
+  isCustomModelSelection,
   normalizeCustomModelSlugs,
   resolveAppModelSelection,
 } from "./appSettings";
@@ -56,6 +57,16 @@ describe("resolveAppModelSelection", () => {
 
   it("falls back to the provider default when no model is selected", () => {
     expect(resolveAppModelSelection("codex", [], "")).toBe("gpt-5.4");
+  });
+});
+
+describe("isCustomModelSelection", () => {
+  it("returns true for saved custom model slugs", () => {
+    expect(isCustomModelSelection("codex", ["galapagos-alpha"], "galapagos-alpha")).toBe(true);
+  });
+
+  it("returns false for built-in model slugs", () => {
+    expect(isCustomModelSelection("codex", ["galapagos-alpha"], "gpt-5.4")).toBe(false);
   });
 });
 
