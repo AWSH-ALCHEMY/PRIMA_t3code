@@ -3861,12 +3861,60 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      const latestUserMessage = activeThread.messages
+        .toReversed()
+        .find((entry) => entry.role === "user");
+      const isLatestUserMessage = latestUserMessage?.id === message.id;
+      const targetTurnCount = revertTurnCountByUserMessageId.get(message.id);
+      if (typeof targetTurnCount === "undefined" && !isLatestUserMessage) {
+        toastManager.add({
+          type: "error",
+          title: "Cannot regenerate from this point",
+          description:
+            "Checkpoint history is unavailable for this message, so the thread cannot be rewound safely.",
+        });
+        return;
+      }
+
+      if (typeof targetTurnCount === "number") {
+        if (phase === "running") {
+          setThreadError(
+            activeThread.id,
+            "Interrupt the current turn before regenerating an earlier response.",
+          );
+          return;
+        }
+        const confirmed = await api.dialogs.confirm(
+          [
+            "Regenerate from this prompt?",
+            "This will discard newer messages and responses below this point in the thread.",
+            "This action cannot be undone.",
+          ].join("\n"),
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+
       sendInFlightRef.current = true;
-      beginSendPhase("sending-turn");
-      const createdAt = new Date().toISOString();
       setThreadError(activeThread.id, null);
 
       try {
+        if (typeof targetTurnCount === "number") {
+          setIsRevertingCheckpoint(true);
+          await api.orchestration.dispatchCommand({
+            type: "thread.checkpoint.revert",
+            commandId: newCommandId(),
+            threadId: activeThread.id,
+            turnCount: targetTurnCount,
+            createdAt: new Date().toISOString(),
+          });
+        }
+
+        beginSendPhase("sending-turn");
+        const createdAt = new Date().toISOString();
+        const messageIdForSend = typeof targetTurnCount === "number" ? newMessageId() : message.id;
+
         await persistThreadSettingsForNextTurn({
           threadId: activeThread.id,
           createdAt,
@@ -3880,7 +3928,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           commandId: newCommandId(),
           threadId: activeThread.id,
           message: {
-            messageId: message.id,
+            messageId: messageIdForSend,
             role: "user",
             text: message.text,
             attachments: [],
@@ -3903,6 +3951,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         );
         resetSendPhase();
       } finally {
+        setIsRevertingCheckpoint(false);
         sendInFlightRef.current = false;
       }
     },
@@ -3912,13 +3961,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
       interactionMode,
       isConnecting,
       isSendBusy,
+      phase,
       persistThreadSettingsForNextTurn,
       providerOptionsForDispatch,
       resetSendPhase,
+      revertTurnCountByUserMessageId,
       runtimeMode,
       selectedModel,
       selectedModelOptionsForDispatch,
       selectedProvider,
+      setIsRevertingCheckpoint,
       setThreadError,
       settings.enableAssistantStreaming,
     ],
@@ -5637,11 +5689,25 @@ const MessagesTimeline = memo(function MessagesTimeline({
       if (!row || row.kind !== "message" || row.message.role !== "user") {
         continue;
       }
-      // Allow re-sending any previous user prompt so the user can regenerate alternatives.
-      result.set(row.message.id, true);
+      let hasLaterUserMessage = false;
+      for (let cursor = index + 1; cursor < rows.length; cursor += 1) {
+        const nextRow = rows[cursor];
+        if (!nextRow || nextRow.kind !== "message") {
+          continue;
+        }
+        if (nextRow.message.role === "user") {
+          hasLaterUserMessage = true;
+          break;
+        }
+      }
+      const isLatestUserMessage = !hasLaterUserMessage;
+      const hasCheckpointRewind = revertTurnCountByUserMessageId.has(row.message.id);
+      // Rewind-based regeneration requires checkpoint metadata.
+      // Plain resend without rewind is only supported on the latest user prompt.
+      result.set(row.message.id, hasCheckpointRewind || isLatestUserMessage);
     }
     return result;
-  }, [rows]);
+  }, [revertTurnCountByUserMessageId, rows]);
 
   const firstUnvirtualizedRowIndex = useMemo(() => {
     const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
@@ -6016,7 +6082,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   <span className="h-px flex-1 bg-border" />
                 </div>
               )}
-              <div className="min-w-0 px-1 py-0.5">
+              <div className="group min-w-0 px-1 py-0.5">
                 <ChatMarkdown
                   text={messageText}
                   cwd={markdownCwd}
@@ -6078,6 +6144,11 @@ const MessagesTimeline = memo(function MessagesTimeline({
                     </div>
                   );
                 })()}
+                {row.message.text && (
+                  <div className="mt-1.5 flex items-center justify-end gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                    <MessageCopyButton text={row.message.text} />
+                  </div>
+                )}
                 {footerBadges.length > 0 && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] leading-none">
                     {footerBadges.map((badge) => (

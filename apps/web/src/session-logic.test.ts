@@ -410,6 +410,28 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
+  it("omits token usage update entries from work log", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "token-usage",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        summary: "Token usage updated",
+        kind: "thread.token-usage.updated",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "tool-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Command run complete",
+        tone: "tool",
+        kind: "tool.completed",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+  });
+
   it("orders work log by activity sequence when present", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
