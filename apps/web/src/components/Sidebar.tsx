@@ -1,4 +1,5 @@
 import {
+  BotIcon,
   ArrowLeftIcon,
   ChevronRightIcon,
   FolderIcon,
@@ -51,6 +52,7 @@ import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
+import { DEFAULT_INTERACTION_MODE, DEFAULT_THREAD_IS_HIDDEN } from "../types";
 import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
@@ -487,6 +489,63 @@ export default function Sidebar() {
       setDraftThreadContext,
       setProjectDraftThreadId,
     ],
+  );
+
+  const handleNewAgentThread = useCallback(
+    async (projectId: ProjectId): Promise<void> => {
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+      const project = projects.find((entry) => entry.id === projectId);
+      if (!project) {
+        toastManager.add({
+          type: "error",
+          title: "Project not found",
+          description: "Could not create an agent thread for this project.",
+        });
+        return;
+      }
+
+      const projectAgentThreads = threads.filter(
+        (thread) => thread.projectId === projectId && thread.threadKind === "agentThread",
+      );
+      const threadTitle =
+        projectAgentThreads.length === 0
+          ? "Agent channel"
+          : `Agent channel ${projectAgentThreads.length + 1}`;
+      const threadId = newThreadId();
+      const createdAt = new Date().toISOString();
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "thread.create",
+          commandId: newCommandId(),
+          threadId,
+          projectId,
+          title: threadTitle,
+          model: project.model || DEFAULT_MODEL_BY_PROVIDER.codex,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_INTERACTION_MODE,
+          threadKind: "agentThread",
+          isHidden: DEFAULT_THREAD_IS_HIDDEN,
+          isLocked: true,
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        });
+        await navigate({
+          to: "/$threadId",
+          params: { threadId },
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to create agent thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+    },
+    [navigate, projects, threads],
   );
 
   const focusMostRecentThreadForProject = useCallback(
@@ -1646,6 +1705,31 @@ export default function Sidebar() {
                                   ? `New thread (${newThreadShortcutLabel})`
                                   : "New thread"}
                               </TooltipPopup>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <SidebarMenuAction
+                                    render={
+                                      <button
+                                        type="button"
+                                        aria-label={`Create new agent thread in ${project.name}`}
+                                        data-testid="new-agent-thread-button"
+                                      />
+                                    }
+                                    showOnHover
+                                    className="top-1 right-7 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      void handleNewAgentThread(project.id);
+                                    }}
+                                  >
+                                    <BotIcon className="size-3.5" />
+                                  </SidebarMenuAction>
+                                }
+                              />
+                              <TooltipPopup side="top">New agent thread</TooltipPopup>
                             </Tooltip>
                           </div>
 
