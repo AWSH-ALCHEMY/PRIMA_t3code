@@ -5,6 +5,7 @@ import { Effect, Schema } from "effect";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  ClientOrchestrationCommand,
   OrchestrationGetTurnDiffInput,
   OrchestrationMessage,
   OrchestrationSession,
@@ -29,6 +30,7 @@ const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSessi
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeThreadMessageSentPayload = Schema.decodeUnknownEffect(ThreadMessageSentPayload);
 const decodeOrchestrationMessage = Schema.decodeUnknownEffect(OrchestrationMessage);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -288,5 +290,30 @@ it.effect("decodes orchestration message with optional agent envelope metadata",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.agentEnvelope?.channelKey, "research-handoff");
+  }),
+);
+
+it.effect("decodes thread.message.send command with optional agent envelope metadata", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeClientOrchestrationCommand({
+      type: "thread.message.send",
+      commandId: "cmd-message-send-1",
+      threadId: "thread-1",
+      message: {
+        messageId: "message-1",
+        role: "assistant",
+        text: "handoff complete",
+        agentEnvelope: {
+          channelKey: "supervisor-research",
+          senderLabel: "Supervisor",
+          recipientLabel: "Research Agent",
+        },
+        turnId: null,
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.type, "thread.message.send");
+    if (parsed.type !== "thread.message.send") return;
+    assert.strictEqual(parsed.message.agentEnvelope?.senderLabel, "Supervisor");
   }),
 );

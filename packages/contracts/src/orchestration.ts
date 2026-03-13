@@ -395,6 +395,21 @@ const ThreadInteractionModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadMessageSendCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.send"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  message: Schema.Struct({
+    messageId: MessageId,
+    role: OrchestrationMessageRole,
+    text: Schema.String,
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    agentEnvelope: Schema.optional(OrchestrationAgentEnvelope),
+    turnId: Schema.optional(Schema.NullOr(TurnId)),
+  }),
+  createdAt: IsoDateTime,
+});
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -488,6 +503,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
+  ThreadMessageSendCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -508,6 +524,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
+  ThreadMessageSendCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,

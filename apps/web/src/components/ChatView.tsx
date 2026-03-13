@@ -1026,6 +1026,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
+  const isAgentThread = activeThread?.threadKind === "agentThread";
   const isAgentManagedLockedThread =
     activeThread?.threadKind === "agentThread" && activeThread.isLocked === true;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
@@ -3211,6 +3212,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
     });
   };
 
+  const onInsertDemoAgentMessage = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api || !activeThreadId || !isServerThread || !isAgentThread) {
+      return;
+    }
+    const createdAt = new Date().toISOString();
+    await api.orchestration.dispatchCommand({
+      type: "thread.message.send",
+      commandId: newCommandId(),
+      threadId: activeThreadId,
+      message: {
+        messageId: newMessageId(),
+        role: "assistant",
+        text: "Demo agent channel message.",
+        agentEnvelope: {
+          channelKey: `project-channel:${activeThreadId}`,
+          senderLabel: "Supervisor",
+          recipientLabel: "Research Agent",
+        },
+        turnId: null,
+      },
+      createdAt,
+    });
+  }, [activeThreadId, isAgentThread, isServerThread]);
+
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
       const api = readNativeApi();
@@ -4213,10 +4239,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     />
                   </div>
                 ) : null}
-                {isAgentManagedLockedThread ? (
-                  <p className="px-3 py-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
-                    Agent-managed thread (read-only).
-                  </p>
+                {isAgentThread ? (
+                  <div className="flex items-center justify-between gap-2 px-3 py-1.5">
+                    <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                      {isAgentManagedLockedThread
+                        ? "Agent-managed thread (read-only)."
+                        : "Agent-managed thread."}
+                    </p>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => {
+                        void onInsertDemoAgentMessage();
+                      }}
+                      disabled={isSendBusy || isConnecting}
+                      title="Insert a demo agent-to-agent message"
+                    >
+                      <BotIcon className="size-3" />
+                      <span>Insert demo message</span>
+                    </Button>
+                  </div>
                 ) : null}
 
                 {/* Textarea area */}

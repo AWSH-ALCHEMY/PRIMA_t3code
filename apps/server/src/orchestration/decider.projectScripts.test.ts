@@ -201,6 +201,96 @@ describe("decider project scripts", () => {
     });
   });
 
+  it("emits thread.message-sent for thread.message.send with agent envelope metadata", async () => {
+    const now = new Date().toISOString();
+    const initial = createEmptyReadModel(now);
+    const withProject = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-message-send"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-1"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-message-send"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-message-send"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModel: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const readModel = await Effect.runPromise(
+      projectEvent(withProject, {
+        sequence: 2,
+        eventId: asEventId("evt-thread-create-message-send"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-1"),
+        type: "thread.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-thread-create-message-send"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-thread-create-message-send"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          projectId: asProjectId("project-1"),
+          title: "Thread",
+          model: "gpt-5-codex",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.message.send",
+          commandId: CommandId.makeUnsafe("cmd-message-send"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          message: {
+            messageId: asMessageId("message-assistant-1"),
+            role: "assistant",
+            text: "handoff complete",
+            agentEnvelope: {
+              channelKey: "supervisor-research",
+              senderLabel: "Supervisor",
+              recipientLabel: "Research Agent",
+            },
+            turnId: null,
+          },
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event?.type).toBe("thread.message-sent");
+    if (!event || event.type !== "thread.message-sent") {
+      return;
+    }
+    expect(event.payload.agentEnvelope).toEqual({
+      channelKey: "supervisor-research",
+      senderLabel: "Supervisor",
+      recipientLabel: "Research Agent",
+    });
+    expect(event.payload.role).toBe("assistant");
+    expect(event.payload.streaming).toBe(false);
+  });
+
   it("emits thread.runtime-mode-set from thread.runtime-mode.set", async () => {
     const now = new Date().toISOString();
     const initial = createEmptyReadModel(now);
