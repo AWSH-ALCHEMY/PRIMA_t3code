@@ -1527,13 +1527,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
           break;
         }
         const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
-        if (!summary) {
-          continue;
-        }
+        const turnCountFromSummary = summary
+          ? (summary.checkpointTurnCount ??
+            (summary.turnId !== null
+              ? inferredCheckpointTurnCountByTurnId[summary.turnId]
+              : undefined))
+          : undefined;
+        const turnCountFromAssistantTurnId =
+          typeof nextEntry.message.turnId === "string"
+            ? inferredCheckpointTurnCountByTurnId[nextEntry.message.turnId]
+            : undefined;
         const turnCount =
-          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
+          typeof turnCountFromSummary === "number"
+            ? turnCountFromSummary
+            : turnCountFromAssistantTurnId;
         if (typeof turnCount !== "number") {
-          break;
+          continue;
         }
         byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
         break;
@@ -1542,6 +1551,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  const latestAvailableCheckpointTurnCount = useMemo(() => {
+    let maxTurnCount: number | null = null;
+    for (const summary of turnDiffSummaries) {
+      const turnCount =
+        summary.checkpointTurnCount ??
+        (typeof summary.turnId === "string"
+          ? inferredCheckpointTurnCountByTurnId[summary.turnId]
+          : undefined);
+      if (typeof turnCount !== "number") {
+        continue;
+      }
+      maxTurnCount = maxTurnCount === null ? turnCount : Math.max(maxTurnCount, turnCount);
+    }
+    return maxTurnCount;
+  }, [inferredCheckpointTurnCountByTurnId, turnDiffSummaries]);
 
   const completionSummary = useMemo(() => {
     if (!latestTurnSettled) return null;
@@ -3865,7 +3889,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
         .toReversed()
         .find((entry) => entry.role === "user");
       const isLatestUserMessage = latestUserMessage?.id === message.id;
-      const targetTurnCount = revertTurnCountByUserMessageId.get(message.id);
+      let targetTurnCount = revertTurnCountByUserMessageId.get(message.id);
+      if (
+        typeof targetTurnCount !== "number" &&
+        isLatestUserMessage &&
+        typeof latestAvailableCheckpointTurnCount === "number"
+      ) {
+        targetTurnCount = latestAvailableCheckpointTurnCount;
+      }
+      const isEditedLatestResend =
+        isLatestUserMessage && latestUserMessage?.text.trim() !== message.text.trim();
       if (typeof targetTurnCount === "undefined" && !isLatestUserMessage) {
         toastManager.add({
           type: "error",
@@ -3875,7 +3908,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
         return;
       }
-
+      if (typeof targetTurnCount === "undefined" && isEditedLatestResend) {
+        toastManager.add({
+          type: "error",
+          title: "Cannot edit and resend yet",
+          description:
+            "No checkpoint is available for this prompt yet. Send a new message, or retry after checkpoint capture completes.",
+        });
+        return;
+      }
       if (typeof targetTurnCount === "number") {
         if (phase === "running") {
           setThreadError(
@@ -3968,6 +4009,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       revertTurnCountByUserMessageId,
       runtimeMode,
       selectedModel,
+      latestAvailableCheckpointTurnCount,
       selectedModelOptionsForDispatch,
       selectedProvider,
       setIsRevertingCheckpoint,
@@ -5597,6 +5639,10 @@ const MessagesTimeline = memo(function MessagesTimeline({
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
+  const [pendingRetryCutoff, setPendingRetryCutoff] = useState<{
+    messageId: MessageId;
+    startedAt: string;
+  } | null>(null);
 
   useLayoutEffect(() => {
     const timelineRoot = timelineRootRef.current;
@@ -5625,10 +5671,38 @@ const MessagesTimeline = memo(function MessagesTimeline({
 
   const rows = useMemo<TimelineRow[]>(() => {
     const nextRows: TimelineRow[] = [];
+    const retryStartedAtMs = pendingRetryCutoff
+      ? Date.parse(pendingRetryCutoff.startedAt)
+      : Number.NaN;
+    let reachedRetryCutoff = pendingRetryCutoff === null;
 
     for (let index = 0; index < timelineEntries.length; index += 1) {
       const timelineEntry = timelineEntries[index];
       if (!timelineEntry) {
+        continue;
+      }
+
+      if (
+        pendingRetryCutoff &&
+        !reachedRetryCutoff &&
+        timelineEntry.kind === "message" &&
+        timelineEntry.message.role === "user" &&
+        timelineEntry.message.id === pendingRetryCutoff.messageId
+      ) {
+        reachedRetryCutoff = true;
+      }
+
+      if (
+        pendingRetryCutoff &&
+        reachedRetryCutoff &&
+        Number.isFinite(retryStartedAtMs) &&
+        Date.parse(timelineEntry.createdAt) < retryStartedAtMs &&
+        !(
+          timelineEntry.kind === "message" &&
+          timelineEntry.message.role === "user" &&
+          timelineEntry.message.id === pendingRetryCutoff.messageId
+        )
+      ) {
         continue;
       }
 
@@ -5681,7 +5755,13 @@ const MessagesTimeline = memo(function MessagesTimeline({
     }
 
     return nextRows;
-  }, [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt]);
+  }, [
+    timelineEntries,
+    completionDividerBeforeEntryId,
+    isWorking,
+    activeTurnStartedAt,
+    pendingRetryCutoff,
+  ]);
   const canResendByUserMessageId = useMemo(() => {
     const result = new Map<MessageId, boolean>();
     for (let index = 0; index < rows.length; index += 1) {
@@ -5703,11 +5783,51 @@ const MessagesTimeline = memo(function MessagesTimeline({
       const isLatestUserMessage = !hasLaterUserMessage;
       const hasCheckpointRewind = revertTurnCountByUserMessageId.has(row.message.id);
       // Rewind-based regeneration requires checkpoint metadata.
-      // Plain resend without rewind is only supported on the latest user prompt.
+      // Plain resend without rewind is supported on the latest user prompt.
       result.set(row.message.id, hasCheckpointRewind || isLatestUserMessage);
     }
     return result;
   }, [revertTurnCountByUserMessageId, rows]);
+  const latestUserMessageId = useMemo(() => {
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (row?.kind === "message" && row.message.role === "user") {
+        return row.message.id;
+      }
+    }
+    return null;
+  }, [rows]);
+  const [editingUserMessageId, setEditingUserMessageId] = useState<MessageId | null>(null);
+  const [editingUserMessageText, setEditingUserMessageText] = useState("");
+  useEffect(() => {
+    if (!editingUserMessageId) {
+      return;
+    }
+    const row = rows.find(
+      (entry) =>
+        entry.kind === "message" &&
+        entry.message.role === "user" &&
+        entry.message.id === editingUserMessageId,
+    );
+    if (!row || latestUserMessageId !== editingUserMessageId) {
+      setEditingUserMessageId(null);
+      setEditingUserMessageText("");
+    }
+  }, [editingUserMessageId, latestUserMessageId, rows]);
+  useEffect(() => {
+    if (!pendingRetryCutoff) {
+      return;
+    }
+    const targetExists = rows.some(
+      (entry) =>
+        entry.kind === "message" &&
+        entry.message.role === "user" &&
+        entry.message.id === pendingRetryCutoff.messageId,
+    );
+    if (!targetExists) {
+      setPendingRetryCutoff(null);
+    }
+  }, [pendingRetryCutoff, rows]);
 
   const firstUnvirtualizedRowIndex = useMemo(() => {
     const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
@@ -5960,9 +6080,17 @@ const MessagesTimeline = memo(function MessagesTimeline({
           const userImages = row.message.attachments ?? [];
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
           const canResend = canResendByUserMessageId.get(row.message.id) === true;
+          const isLatestUserMessage = latestUserMessageId === row.message.id;
+          const isEditing = editingUserMessageId === row.message.id;
+          const trimmedEditedText = editingUserMessageText.trim();
           return (
             <div className="flex justify-end">
-              <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+              <div
+                className={cn(
+                  "group relative rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3",
+                  isEditing ? "w-[min(95%,960px)] max-w-none" : "max-w-[80%]",
+                )}
+              >
                 {userImages.length > 0 && (
                   <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
                     {userImages.map(
@@ -6000,24 +6128,91 @@ const MessagesTimeline = memo(function MessagesTimeline({
                     )}
                   </div>
                 )}
-                {row.message.text && (
+                {!isEditing && row.message.text && (
                   <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
                     {row.message.text}
                   </pre>
                 )}
+                {isEditing && (
+                  <div className="space-y-2">
+                    <textarea
+                      value={editingUserMessageText}
+                      onChange={(event) => setEditingUserMessageText(event.target.value)}
+                      className="min-h-28 w-full resize-y rounded-md border border-border bg-background/85 px-2 py-1.5 font-mono text-sm leading-relaxed text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      spellCheck={false}
+                    />
+                    <div className="flex justify-end gap-1.5">
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={isResendDisabled}
+                        onClick={() => {
+                          setEditingUserMessageId(null);
+                          setEditingUserMessageText("");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={isResendDisabled || trimmedEditedText.length === 0}
+                        onClick={() => {
+                          setPendingRetryCutoff({
+                            messageId: row.message.id,
+                            startedAt: new Date().toISOString(),
+                          });
+                          void onResendUserMessage({
+                            ...row.message,
+                            text: trimmedEditedText,
+                          });
+                          setEditingUserMessageId(null);
+                          setEditingUserMessageText("");
+                        }}
+                      >
+                        Save & resend
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {row.message.text && <MessageCopyButton text={row.message.text} />}
+                    {!isEditing && row.message.text && (
+                      <MessageCopyButton text={row.message.text} />
+                    )}
                     {canResend && (
                       <Button
                         type="button"
                         size="xs"
                         variant="outline"
                         disabled={isResendDisabled}
-                        onClick={() => onResendUserMessage(row.message)}
+                        onClick={() => {
+                          setPendingRetryCutoff({
+                            messageId: row.message.id,
+                            startedAt: new Date().toISOString(),
+                          });
+                          void onResendUserMessage(row.message);
+                        }}
                         title="Re-send this message to the backend"
                       >
                         <RefreshCwIcon className="size-3" />
+                      </Button>
+                    )}
+                    {isLatestUserMessage && row.message.text && (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={isResendDisabled}
+                        onClick={() => {
+                          setEditingUserMessageId(row.message.id);
+                          setEditingUserMessageText(row.message.text);
+                        }}
+                        title="Edit this message and resend"
+                      >
+                        Edit
                       </Button>
                     )}
                     {canRevertAgentWork && (
