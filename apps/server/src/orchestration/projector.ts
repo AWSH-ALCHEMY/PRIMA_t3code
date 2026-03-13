@@ -252,6 +252,9 @@ export function projectEvent(
             id: payload.threadId,
             projectId: payload.projectId,
             parentThreadId: payload.parentThreadId ?? null,
+            threadKind: payload.threadKind,
+            isHidden: payload.isHidden,
+            isLocked: payload.isLocked,
             title: payload.title,
             model: payload.model,
             runtimeMode: payload.runtimeMode,
@@ -295,6 +298,9 @@ export function projectEvent(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
+            ...(payload.threadKind !== undefined ? { threadKind: payload.threadKind } : {}),
+            ...(payload.isHidden !== undefined ? { isHidden: payload.isHidden } : {}),
+            ...(payload.isLocked !== undefined ? { isLocked: payload.isLocked } : {}),
             ...(payload.title !== undefined ? { title: payload.title } : {}),
             ...(payload.model !== undefined ? { model: payload.model } : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),

@@ -57,6 +57,9 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
+export const ThreadKind = Schema.Literals(["normal", "dashboard", "agentThread", "systemThread"]);
+export type ThreadKind = typeof ThreadKind.Type;
+export const DEFAULT_THREAD_KIND: ThreadKind = "normal";
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
@@ -255,6 +258,11 @@ export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  threadKind: Schema.optional(ThreadKind).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_THREAD_KIND),
+  ),
+  isHidden: Schema.optional(Schema.Boolean).pipe(Schema.withDecodingDefault(() => false)),
+  isLocked: Schema.optional(Schema.Boolean).pipe(Schema.withDecodingDefault(() => false)),
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode,
@@ -309,12 +317,17 @@ const ProjectDeleteCommand = Schema.Struct({
   projectId: ProjectId,
 });
 
-const ThreadCreateCommand = Schema.Struct({
+export const ThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
   commandId: CommandId,
   threadId: ThreadId,
   projectId: ProjectId,
   parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  threadKind: Schema.optional(ThreadKind).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_THREAD_KIND),
+  ),
+  isHidden: Schema.optional(Schema.Boolean).pipe(Schema.withDecodingDefault(() => false)),
+  isLocked: Schema.optional(Schema.Boolean).pipe(Schema.withDecodingDefault(() => false)),
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode,
@@ -349,6 +362,9 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
   commandId: CommandId,
   threadId: ThreadId,
+  threadKind: Schema.optional(ThreadKind),
+  isHidden: Schema.optional(Schema.Boolean),
+  isLocked: Schema.optional(Schema.Boolean),
   title: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -631,6 +647,11 @@ export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  threadKind: Schema.optional(ThreadKind).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_THREAD_KIND),
+  ),
+  isHidden: Schema.optional(Schema.Boolean).pipe(Schema.withDecodingDefault(() => false)),
+  isLocked: Schema.optional(Schema.Boolean).pipe(Schema.withDecodingDefault(() => false)),
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
@@ -650,6 +671,9 @@ export const ThreadDeletedPayload = Schema.Struct({
 
 export const ThreadMetaUpdatedPayload = Schema.Struct({
   threadId: ThreadId,
+  threadKind: Schema.optional(ThreadKind),
+  isHidden: Schema.optional(Schema.Boolean),
+  isLocked: Schema.optional(Schema.Boolean),
   title: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

@@ -7,10 +7,12 @@
  * @module ProjectionThreadRepository
  */
 import {
+  DEFAULT_THREAD_KIND,
   IsoDateTime,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  ThreadKind,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -23,6 +25,9 @@ export const ProjectionThread = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   parentThreadId: Schema.NullOr(ThreadId),
+  threadKind: ThreadKind.pipe(Schema.withDecodingDefault(() => DEFAULT_THREAD_KIND)),
+  isHidden: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  isLocked: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   title: Schema.String,
   model: Schema.String,
   runtimeMode: RuntimeMode,

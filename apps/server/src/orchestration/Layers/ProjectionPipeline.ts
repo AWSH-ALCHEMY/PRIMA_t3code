@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  DEFAULT_THREAD_KIND,
   type ChatAttachment,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
@@ -420,6 +421,9 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             threadId: event.payload.threadId,
             projectId: event.payload.projectId,
             parentThreadId: event.payload.parentThreadId ?? null,
+            threadKind: event.payload.threadKind ?? DEFAULT_THREAD_KIND,
+            isHidden: event.payload.isHidden ?? false,
+            isLocked: event.payload.isLocked ?? false,
             title: event.payload.title,
             model: event.payload.model,
             runtimeMode: event.payload.runtimeMode,
@@ -442,6 +446,11 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           }
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
+            ...(event.payload.threadKind !== undefined
+              ? { threadKind: event.payload.threadKind }
+              : {}),
+            ...(event.payload.isHidden !== undefined ? { isHidden: event.payload.isHidden } : {}),
+            ...(event.payload.isLocked !== undefined ? { isLocked: event.payload.isLocked } : {}),
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
             ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),

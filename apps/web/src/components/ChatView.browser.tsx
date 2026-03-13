@@ -206,6 +206,9 @@ function createSnapshotForTargetUser(options: {
       {
         id: THREAD_ID,
         projectId: PROJECT_ID,
+        threadKind: "normal",
+        isHidden: false,
+        isLocked: false,
         title: "Browser test thread",
         model: "gpt-5",
         interactionMode: "default",
@@ -260,6 +263,9 @@ function addThreadToSnapshot(
       {
         id: threadId,
         projectId: PROJECT_ID,
+        threadKind: "normal",
+        isHidden: false,
+        isLocked: false,
         title: "New thread",
         model: "gpt-5",
         interactionMode: "default",

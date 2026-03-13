@@ -1,6 +1,6 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option, Schema, Struct } from "effect";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -14,6 +14,18 @@ import {
 
 const makeProjectionThreadRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const SqliteBooleanDb = Schema.Union([Schema.Number, Schema.Boolean]);
+  const ProjectionThreadDbRow = ProjectionThread.mapFields(
+    Struct.assign({
+      isHidden: SqliteBooleanDb,
+      isLocked: SqliteBooleanDb,
+    }),
+  );
+  const toProjectionThread = (row: typeof ProjectionThreadDbRow.Type): ProjectionThread => ({
+    ...row,
+    isHidden: row.isHidden === true || row.isHidden === 1,
+    isLocked: row.isLocked === true || row.isLocked === 1,
+  });
 
   const upsertProjectionThreadRow = SqlSchema.void({
     Request: ProjectionThread,
@@ -23,6 +35,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           thread_id,
           project_id,
           parent_thread_id,
+          thread_kind,
+          is_hidden,
+          is_locked,
           title,
           model,
           runtime_mode,
@@ -38,6 +53,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.threadId},
           ${row.projectId},
           ${row.parentThreadId},
+          ${row.threadKind},
+          ${row.isHidden ? 1 : 0},
+          ${row.isLocked ? 1 : 0},
           ${row.title},
           ${row.model},
           ${row.runtimeMode},
@@ -53,6 +71,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         DO UPDATE SET
           project_id = excluded.project_id,
           parent_thread_id = excluded.parent_thread_id,
+          thread_kind = excluded.thread_kind,
+          is_hidden = excluded.is_hidden,
+          is_locked = excluded.is_locked,
           title = excluded.title,
           model = excluded.model,
           runtime_mode = excluded.runtime_mode,
@@ -68,13 +89,16 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const getProjectionThreadRow = SqlSchema.findOneOption({
     Request: GetProjectionThreadInput,
-    Result: ProjectionThread,
+    Result: ProjectionThreadDbRow,
     execute: ({ threadId }) =>
       sql`
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
           parent_thread_id AS "parentThreadId",
+          thread_kind AS "threadKind",
+          is_hidden AS "isHidden",
+          is_locked AS "isLocked",
           title,
           model,
           runtime_mode AS "runtimeMode",
@@ -92,13 +116,16 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const listProjectionThreadRows = SqlSchema.findAll({
     Request: ListProjectionThreadsByProjectInput,
-    Result: ProjectionThread,
+    Result: ProjectionThreadDbRow,
     execute: ({ projectId }) =>
       sql`
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
           parent_thread_id AS "parentThreadId",
+          thread_kind AS "threadKind",
+          is_hidden AS "isHidden",
+          is_locked AS "isLocked",
           title,
           model,
           runtime_mode AS "runtimeMode",
@@ -131,11 +158,13 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const getById: ProjectionThreadRepositoryShape["getById"] = (input) =>
     getProjectionThreadRow(input).pipe(
+      Effect.map((row) => Option.map(row, toProjectionThread)),
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.getById:query")),
     );
 
   const listByProjectId: ProjectionThreadRepositoryShape["listByProjectId"] = (input) =>
     listProjectionThreadRows(input).pipe(
+      Effect.map((rows) => rows.map(toProjectionThread)),
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.listByProjectId:query")),
     );
 

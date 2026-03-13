@@ -76,6 +76,9 @@ function createMinimalSnapshot(): OrchestrationReadModel {
       {
         id: THREAD_ID,
         projectId: PROJECT_ID,
+        threadKind: "normal",
+        isHidden: false,
+        isLocked: false,
         title: "Test thread",
         model: "gpt-5",
         interactionMode: "default",

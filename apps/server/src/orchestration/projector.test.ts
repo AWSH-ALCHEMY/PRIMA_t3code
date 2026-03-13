@@ -72,6 +72,10 @@ describe("orchestration projector", () => {
       {
         id: "thread-1",
         projectId: "project-1",
+        parentThreadId: null,
+        threadKind: "normal",
+        isHidden: false,
+        isLocked: false,
         title: "demo",
         model: "gpt-5-codex",
         runtimeMode: "full-access",

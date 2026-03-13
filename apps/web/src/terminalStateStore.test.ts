@@ -5,9 +5,39 @@ import { selectThreadTerminalState, useTerminalStateStore } from "./terminalStat
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
 
+function installLocalStorageShim(): void {
+  const data = new Map<string, string>();
+  const shim = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      data.set(key, value);
+    },
+    removeItem: (key: string) => {
+      data.delete(key);
+    },
+    clear: () => {
+      data.clear();
+    },
+  } satisfies Pick<Storage, "getItem" | "setItem" | "removeItem" | "clear">;
+  Object.defineProperty(globalThis, "localStorage", {
+    value: shim,
+    configurable: true,
+    writable: true,
+  });
+}
+
 describe("terminalStateStore actions", () => {
   beforeEach(() => {
-    if (typeof localStorage !== "undefined") {
+    if (
+      typeof localStorage === "undefined" ||
+      typeof localStorage.getItem !== "function" ||
+      typeof localStorage.setItem !== "function" ||
+      typeof localStorage.removeItem !== "function" ||
+      typeof localStorage.clear !== "function"
+    ) {
+      installLocalStorageShim();
+    }
+    if (typeof localStorage.clear === "function") {
       localStorage.clear();
     }
     useTerminalStateStore.setState({ terminalStateByThreadId: {} });

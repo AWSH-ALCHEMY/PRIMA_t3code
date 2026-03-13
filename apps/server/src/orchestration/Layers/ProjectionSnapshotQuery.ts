@@ -53,7 +53,12 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
-const ProjectionThreadDbRowSchema = ProjectionThread;
+const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
+  Struct.assign({
+    isHidden: Schema.Union([Schema.Number, Schema.Boolean]),
+    isLocked: Schema.Union([Schema.Number, Schema.Boolean]),
+  }),
+);
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
     payload: Schema.fromJsonString(Schema.Unknown),
@@ -156,6 +161,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           project_id AS "projectId",
           parent_thread_id AS "parentThreadId",
+          thread_kind AS "threadKind",
+          is_hidden AS "isHidden",
+          is_locked AS "isLocked",
           title,
           model,
           runtime_mode AS "runtimeMode",
@@ -529,6 +537,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             id: row.threadId,
             projectId: row.projectId,
             parentThreadId: row.parentThreadId,
+            threadKind: row.threadKind,
+            isHidden: row.isHidden === true || row.isHidden === 1,
+            isLocked: row.isLocked === true || row.isLocked === 1,
             title: row.title,
             model: row.model,
             runtimeMode: row.runtimeMode,

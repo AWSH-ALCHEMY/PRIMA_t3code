@@ -8,7 +8,14 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";
-import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
+import {
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  DEFAULT_THREAD_IS_HIDDEN,
+  DEFAULT_THREAD_IS_LOCKED,
+  DEFAULT_THREAD_KIND,
+  type Thread,
+} from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -16,6 +23,9 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
     parentThreadId: null,
+    threadKind: DEFAULT_THREAD_KIND,
+    isHidden: DEFAULT_THREAD_IS_HIDDEN,
+    isLocked: DEFAULT_THREAD_IS_LOCKED,
     title: "Thread",
     model: "gpt-5-codex",
     runtimeMode: DEFAULT_RUNTIME_MODE,
@@ -56,6 +66,9 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     id: ThreadId.makeUnsafe("thread-1"),
     projectId: ProjectId.makeUnsafe("project-1"),
     parentThreadId: null,
+    threadKind: DEFAULT_THREAD_KIND,
+    isHidden: DEFAULT_THREAD_IS_HIDDEN,
+    isLocked: DEFAULT_THREAD_IS_LOCKED,
     title: "Thread",
     model: "gpt-5.3-codex",
     runtimeMode: DEFAULT_RUNTIME_MODE,

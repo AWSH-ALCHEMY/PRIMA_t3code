@@ -225,6 +225,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         {
           id: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
+          parentThreadId: null,
+          threadKind: "normal",
+          isHidden: false,
+          isLocked: false,
           title: "Thread 1",
           model: "gpt-5-codex",
           interactionMode: "default",

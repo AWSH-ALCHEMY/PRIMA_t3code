@@ -13,7 +13,14 @@ import {
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
 import { create } from "zustand";
-import { type ChatMessage, type Project, type Thread } from "./types";
+import {
+  DEFAULT_THREAD_IS_HIDDEN,
+  DEFAULT_THREAD_IS_LOCKED,
+  DEFAULT_THREAD_KIND,
+  type ChatMessage,
+  type Project,
+  type Thread,
+} from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
 
 // ── State ────────────────────────────────────────────────────────────
@@ -260,6 +267,9 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         codexThreadId: null,
         projectId: thread.projectId,
         parentThreadId: thread.parentThreadId ?? null,
+        threadKind: thread.threadKind ?? DEFAULT_THREAD_KIND,
+        isHidden: thread.isHidden ?? DEFAULT_THREAD_IS_HIDDEN,
+        isLocked: thread.isLocked ?? DEFAULT_THREAD_IS_LOCKED,
         title: thread.title,
         model: resolveModelSlugForProvider(
           inferProviderForThreadModel({

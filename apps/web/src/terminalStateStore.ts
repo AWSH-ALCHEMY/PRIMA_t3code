@@ -27,6 +27,37 @@ interface ThreadTerminalState {
 
 const TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
 
+interface JsonStorageLike {
+  getItem: (name: string) => string | null;
+  setItem: (name: string, value: string) => void;
+  removeItem: (name: string) => void;
+}
+
+const fallbackStorageData = new Map<string, string>();
+const fallbackStorage: JsonStorageLike = {
+  getItem: (name) => fallbackStorageData.get(name) ?? null,
+  setItem: (name, value) => {
+    fallbackStorageData.set(name, value);
+  },
+  removeItem: (name) => {
+    fallbackStorageData.delete(name);
+  },
+};
+
+function resolveTerminalStateStorage(): JsonStorageLike {
+  if (typeof localStorage === "undefined") {
+    return fallbackStorage;
+  }
+  if (
+    typeof localStorage.getItem !== "function" ||
+    typeof localStorage.setItem !== "function" ||
+    typeof localStorage.removeItem !== "function"
+  ) {
+    return fallbackStorage;
+  }
+  return localStorage;
+}
+
 function normalizeTerminalIds(terminalIds: string[]): string[] {
   const ids = [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))].slice(
     0,
@@ -541,7 +572,7 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
     {
       name: TERMINAL_STATE_STORAGE_KEY,
       version: 1,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(resolveTerminalStateStorage),
       partialize: (state) => ({
         terminalStateByThreadId: state.terminalStateByThreadId,
       }),

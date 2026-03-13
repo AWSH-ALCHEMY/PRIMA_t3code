@@ -8,6 +8,7 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationSession,
   ProjectCreateCommand,
+  ThreadCreateCommand,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -17,6 +18,7 @@ import {
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
 const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateCommand);
+const decodeThreadCreateCommand = Schema.decodeUnknownEffect(ThreadCreateCommand);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
@@ -155,6 +157,31 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
     });
 
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.threadKind, "normal");
+    assert.strictEqual(parsed.isHidden, false);
+    assert.strictEqual(parsed.isLocked, false);
+  }),
+);
+
+it.effect("decodes thread.create custom thread metadata defaults", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadCreateCommand({
+      type: "thread.create",
+      commandId: "cmd-thread-create-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Agent Thread",
+      model: "gpt-5.4",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.threadKind, "normal");
+    assert.strictEqual(parsed.isHidden, false);
+    assert.strictEqual(parsed.isLocked, false);
   }),
 );
 

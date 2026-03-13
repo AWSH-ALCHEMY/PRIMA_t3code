@@ -1,7 +1,14 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
+import {
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  DEFAULT_THREAD_IS_HIDDEN,
+  DEFAULT_THREAD_IS_LOCKED,
+  DEFAULT_THREAD_KIND,
+  type Thread,
+} from "./types";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -10,6 +17,9 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
     parentThreadId: null,
+    threadKind: DEFAULT_THREAD_KIND,
+    isHidden: DEFAULT_THREAD_IS_HIDDEN,
+    isLocked: DEFAULT_THREAD_IS_LOCKED,
     title: "Thread",
     model: "gpt-5.3-codex",
     runtimeMode: DEFAULT_RUNTIME_MODE,

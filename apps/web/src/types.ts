@@ -1,4 +1,6 @@
+import { DEFAULT_THREAD_KIND as ContractDefaultThreadKind } from "@t3tools/contracts";
 import type {
+  ThreadKind,
   OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
@@ -18,6 +20,9 @@ export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
 export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "default";
+export const DEFAULT_THREAD_KIND: ThreadKind = ContractDefaultThreadKind;
+export const DEFAULT_THREAD_IS_HIDDEN = false;
+export const DEFAULT_THREAD_IS_LOCKED = false;
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";
 export const MAX_THREAD_TERMINAL_COUNT = 4;
@@ -89,6 +94,9 @@ export interface Thread {
   codexThreadId: string | null;
   projectId: ProjectId;
   parentThreadId: ThreadId | null;
+  threadKind: ThreadKind;
+  isHidden: boolean;
+  isLocked: boolean;
   title: string;
   model: string;
   runtimeMode: RuntimeMode;
