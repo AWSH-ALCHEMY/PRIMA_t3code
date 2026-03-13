@@ -50,6 +50,7 @@ import {
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
+import { resolveNextAgentEnvelope } from "../lib/agentThread";
 
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -2919,11 +2920,84 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
+  const onSendAgentMessage = useCallback(
+    async (text: string) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        !isAgentThread ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+      const trimmed = text.trim();
+      if (!trimmed) {
+        return;
+      }
+      const createdAt = new Date().toISOString();
+      const threadIdForSend = activeThread.id;
+      const nextAgentEnvelope = resolveNextAgentEnvelope(threadIdForSend, activeThread.messages);
+
+      sendInFlightRef.current = true;
+      beginSendPhase("sending-turn");
+      shouldAutoScrollRef.current = true;
+      forceStickToBottom();
+      setThreadError(threadIdForSend, null);
+      promptRef.current = "";
+      clearComposerDraftContent(threadIdForSend);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "thread.message.send",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: newMessageId(),
+            role: "assistant",
+            text: trimmed,
+            agentEnvelope: nextAgentEnvelope,
+            turnId: null,
+          },
+          createdAt,
+        });
+      } catch (error) {
+        promptRef.current = trimmed;
+        setPrompt(trimmed);
+        setComposerCursor(trimmed.length);
+        setComposerTrigger(detectComposerTrigger(trimmed, trimmed.length));
+        setThreadError(
+          threadIdForSend,
+          error instanceof Error ? error.message : "Failed to send agent message.",
+        );
+      }
+      sendInFlightRef.current = false;
+      resetSendPhase();
+    },
+    [
+      activeThread,
+      beginSendPhase,
+      clearComposerDraftContent,
+      forceStickToBottom,
+      isAgentThread,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      resetSendPhase,
+      setPrompt,
+      setThreadError,
+    ],
+  );
+
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readNativeApi();
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
-    if (isAgentManagedLockedThread) return;
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -2954,6 +3028,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerHighlightedItemId(null);
       setComposerCursor(0);
       setComposerTrigger(null);
+      return;
+    }
+    if (isAgentThread && isServerThread) {
+      if (composerImages.length > 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Image attachments are not supported in agent channels",
+          description: "Send text-only channel messages in this thread.",
+        });
+        return;
+      }
+      await onSendAgentMessage(trimmed);
       return;
     }
     if (!trimmed && composerImages.length === 0) return;
@@ -3211,31 +3297,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       createdAt: new Date().toISOString(),
     });
   };
-
-  const onInsertDemoAgentMessage = useCallback(async () => {
-    const api = readNativeApi();
-    if (!api || !activeThreadId || !isServerThread || !isAgentThread) {
-      return;
-    }
-    const createdAt = new Date().toISOString();
-    await api.orchestration.dispatchCommand({
-      type: "thread.message.send",
-      commandId: newCommandId(),
-      threadId: activeThreadId,
-      message: {
-        messageId: newMessageId(),
-        role: "assistant",
-        text: "Demo agent channel message.",
-        agentEnvelope: {
-          channelKey: `project-channel:${activeThreadId}`,
-          senderLabel: "Supervisor",
-          recipientLabel: "Research Agent",
-        },
-        turnId: null,
-      },
-      createdAt,
-    });
-  }, [activeThreadId, isAgentThread, isServerThread]);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -4243,22 +4304,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   <div className="flex items-center justify-between gap-2 px-3 py-1.5">
                     <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
                       {isAgentManagedLockedThread
-                        ? "Agent-managed thread (read-only)."
+                        ? "Agent channel mode. Messages are sent as channel events."
                         : "Agent-managed thread."}
                     </p>
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      onClick={() => {
-                        void onInsertDemoAgentMessage();
-                      }}
-                      disabled={isSendBusy || isConnecting}
-                      title="Insert a demo agent-to-agent message"
-                    >
-                      <BotIcon className="size-3" />
-                      <span>Insert demo message</span>
-                    </Button>
                   </div>
                 ) : null}
 
@@ -4367,7 +4415,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     onPaste={onComposerPaste}
                     placeholder={
                       isAgentManagedLockedThread
-                        ? "This agent-managed thread is read-only."
+                        ? "Send a channel message"
                         : isComposerApprovalState
                           ? (activePendingApproval?.detail ??
                             "Resolve this approval request to continue")
@@ -4379,7 +4427,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 ? "Ask for follow-up changes or attach images"
                                 : "Ask anything, @tag files/folders, or use / to show available commands"
                     }
-                    disabled={isConnecting || isComposerApprovalState || isAgentManagedLockedThread}
+                    disabled={isConnecting || isComposerApprovalState}
                   />
                 </div>
 
@@ -4602,7 +4650,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               type="submit"
                               size="sm"
                               className="h-9 rounded-full px-4 sm:h-8"
-                              disabled={isSendBusy || isConnecting || isAgentManagedLockedThread}
+                              disabled={isSendBusy || isConnecting}
                             >
                               {isConnecting || isSendBusy ? "Sending..." : "Refine"}
                             </Button>
@@ -4612,7 +4660,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 type="submit"
                                 size="sm"
                                 className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
-                                disabled={isSendBusy || isConnecting || isAgentManagedLockedThread}
+                                disabled={isSendBusy || isConnecting}
                               >
                                 {isConnecting || isSendBusy ? "Sending..." : "Implement"}
                               </Button>
@@ -4624,9 +4672,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                       variant="default"
                                       className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
                                       aria-label="Implementation actions"
-                                      disabled={
-                                        isSendBusy || isConnecting || isAgentManagedLockedThread
-                                      }
+                                      disabled={isSendBusy || isConnecting}
                                     />
                                   }
                                 >
@@ -4634,9 +4680,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 </MenuTrigger>
                                 <MenuPopup align="end" side="top">
                                   <MenuItem
-                                    disabled={
-                                      isSendBusy || isConnecting || isAgentManagedLockedThread
-                                    }
+                                    disabled={isSendBusy || isConnecting}
                                     onClick={() => void onImplementPlanInNewThread()}
                                   >
                                     Implement in new thread
@@ -4652,7 +4696,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             disabled={
                               isSendBusy ||
                               isConnecting ||
-                              isAgentManagedLockedThread ||
                               (!prompt.trim() && composerImages.length === 0)
                             }
                             aria-label={
