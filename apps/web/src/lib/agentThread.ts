@@ -68,3 +68,12 @@ export function listLinkedAgentThreads(
 export function buildAgentChannelTurnPrompt(input: { senderLabel: string; text: string }): string {
   return [`Agent channel message from ${input.senderLabel}:`, "", input.text].join("\n");
 }
+
+export function extractAgentChannelPromptSender(text: string): string | null {
+  const match = /^Agent channel message from (.+?):/su.exec(text);
+  if (!match) {
+    return null;
+  }
+  const senderLabel = match[1]?.trim();
+  return senderLabel && senderLabel.length > 0 ? senderLabel : null;
+}

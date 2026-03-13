@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ThreadId } from "@t3tools/contracts";
 import {
   buildAgentChannelTurnPrompt,
+  extractAgentChannelPromptSender,
   getLatestAgentChannelKey,
   invertAgentEnvelope,
   listLinkedAgentThreads,
@@ -175,5 +176,12 @@ describe("resolveNextAgentEnvelope", () => {
     expect(buildAgentChannelTurnPrompt({ senderLabel: "Supervisor", text: "Do work." })).toBe(
       "Agent channel message from Supervisor:\n\nDo work.",
     );
+  });
+
+  it("extracts sender label from agent channel prompt", () => {
+    expect(
+      extractAgentChannelPromptSender("Agent channel message from Supervisor:\n\nDo work."),
+    ).toBe("Supervisor");
+    expect(extractAgentChannelPromptSender("Random prompt")).toBe(null);
   });
 });

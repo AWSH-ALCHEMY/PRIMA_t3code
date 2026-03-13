@@ -52,6 +52,7 @@ import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import {
   buildAgentChannelTurnPrompt,
+  extractAgentChannelPromptSender,
   getLatestAgentChannelKey,
   listLinkedAgentThreads,
   resolveNextAgentEnvelope,
@@ -965,6 +966,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
+  const mirroredLinkedTurnKeysRef = useRef<Set<string>>(new Set());
+  const linkedTurnMirrorBootstrappedRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -1058,6 +1061,99 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     return projects.filter((project) => project.id !== activeProject.id);
   }, [activeProject, projects]);
+
+  useEffect(() => {
+    mirroredLinkedTurnKeysRef.current.clear();
+    linkedTurnMirrorBootstrappedRef.current = false;
+  }, [activeThread?.id]);
+
+  useEffect(() => {
+    const api = readNativeApi();
+    if (!api || !activeThread || !activeProject || !isServerThread || !isAgentThread) {
+      return;
+    }
+    const channelKey = getLatestAgentChannelKey(activeThread.messages);
+    if (!channelKey) {
+      return;
+    }
+    const sourceLabel = activeProject.name;
+    const candidateMirrors: Array<{
+      key: string;
+      text: string;
+      senderLabel: string;
+    }> = [];
+
+    for (const linkedThread of linkedAgentThreads) {
+      const linkedProjectName =
+        projects.find((project) => project.id === linkedThread.projectId)?.name ?? "Agent";
+      for (let index = 0; index < linkedThread.messages.length; index += 1) {
+        const message = linkedThread.messages[index];
+        if (!message) {
+          continue;
+        }
+        if (message.role !== "assistant" || message.streaming || message.agentEnvelope) {
+          continue;
+        }
+        const triggerMessage = linkedThread.messages
+          .slice(0, index)
+          .toReversed()
+          .find((candidate) => candidate.role === "user");
+        if (!triggerMessage || triggerMessage.text.length === 0) {
+          continue;
+        }
+        const promptSender = extractAgentChannelPromptSender(triggerMessage.text);
+        if (promptSender !== sourceLabel) {
+          continue;
+        }
+        candidateMirrors.push({
+          key: `${activeThread.id}:${linkedThread.id}:${message.id}`,
+          text: message.text,
+          senderLabel: linkedProjectName,
+        });
+      }
+    }
+
+    if (!linkedTurnMirrorBootstrappedRef.current) {
+      for (const candidate of candidateMirrors) {
+        mirroredLinkedTurnKeysRef.current.add(candidate.key);
+      }
+      linkedTurnMirrorBootstrappedRef.current = true;
+      return;
+    }
+
+    const nextMirrors = candidateMirrors.filter(
+      (candidate) => !mirroredLinkedTurnKeysRef.current.has(candidate.key),
+    );
+    if (nextMirrors.length === 0) {
+      return;
+    }
+
+    for (const candidate of nextMirrors) {
+      mirroredLinkedTurnKeysRef.current.add(candidate.key);
+    }
+    const createdAt = new Date().toISOString();
+    void Promise.all(
+      nextMirrors.map((candidate) =>
+        api.orchestration.dispatchCommand({
+          type: "thread.message.send",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          message: {
+            messageId: newMessageId(),
+            role: "assistant",
+            text: candidate.text,
+            agentEnvelope: {
+              channelKey,
+              senderLabel: candidate.senderLabel,
+              recipientLabel: sourceLabel,
+            },
+            turnId: null,
+          },
+          createdAt,
+        }),
+      ),
+    ).catch(() => undefined);
+  }, [activeProject, activeThread, isAgentThread, isServerThread, linkedAgentThreads, projects]);
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
