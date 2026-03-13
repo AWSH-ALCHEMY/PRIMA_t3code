@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ThreadId } from "@t3tools/contracts";
-import { resolveNextAgentEnvelope } from "./agentThread";
-import type { ChatMessage } from "../types";
+import {
+  getLatestAgentChannelKey,
+  invertAgentEnvelope,
+  listLinkedAgentThreads,
+  resolveNextAgentEnvelope,
+} from "./agentThread";
+import type { ChatMessage, Thread } from "../types";
 
 function buildMessage(partial: Partial<ChatMessage>): ChatMessage {
   return {
@@ -10,6 +15,33 @@ function buildMessage(partial: Partial<ChatMessage>): ChatMessage {
     text: "",
     createdAt: "2026-01-01T00:00:00.000Z",
     streaming: false,
+    ...partial,
+  };
+}
+
+function buildThread(partial: Partial<Thread>): Thread {
+  return {
+    id: ThreadId.makeUnsafe("thread-default"),
+    codexThreadId: null,
+    projectId: "project-1" as Thread["projectId"],
+    parentThreadId: null,
+    threadKind: "agentThread",
+    isHidden: false,
+    isLocked: true,
+    title: "Agent channel",
+    model: "gpt-5.4",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    session: null,
+    messages: [],
+    proposedPlans: [],
+    error: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    latestTurn: null,
+    branch: null,
+    worktreePath: null,
+    turnDiffSummaries: [],
+    activities: [],
     ...partial,
   };
 }
@@ -52,5 +84,89 @@ describe("resolveNextAgentEnvelope", () => {
       senderLabel: "Agent",
       recipientLabel: "Agent",
     });
+  });
+
+  it("returns latest channel key from message metadata", () => {
+    expect(
+      getLatestAgentChannelKey([
+        buildMessage({
+          id: "msg-1" as ChatMessage["id"],
+          agentEnvelope: {
+            channelKey: "old",
+            senderLabel: "A",
+            recipientLabel: "B",
+          },
+        }),
+        buildMessage({
+          id: "msg-2" as ChatMessage["id"],
+          agentEnvelope: {
+            channelKey: "new",
+            senderLabel: "B",
+            recipientLabel: "A",
+          },
+        }),
+      ]),
+    ).toBe("new");
+  });
+
+  it("inverts sender and recipient labels", () => {
+    expect(
+      invertAgentEnvelope({
+        channelKey: "k",
+        senderLabel: "Supervisor",
+        recipientLabel: "Research Agent",
+      }),
+    ).toEqual({
+      channelKey: "k",
+      senderLabel: "Research Agent",
+      recipientLabel: "Supervisor",
+    });
+  });
+
+  it("lists linked agent threads by shared channel key", () => {
+    const sourceId = ThreadId.makeUnsafe("source");
+    const linked = buildThread({
+      id: ThreadId.makeUnsafe("linked"),
+      messages: [
+        buildMessage({
+          id: "msg-linked" as ChatMessage["id"],
+          agentEnvelope: {
+            channelKey: "channel-1",
+            senderLabel: "A",
+            recipientLabel: "B",
+          },
+        }),
+      ],
+    });
+    const unrelated = buildThread({
+      id: ThreadId.makeUnsafe("unrelated"),
+      messages: [
+        buildMessage({
+          id: "msg-unrelated" as ChatMessage["id"],
+          agentEnvelope: {
+            channelKey: "channel-2",
+            senderLabel: "A",
+            recipientLabel: "B",
+          },
+        }),
+      ],
+    });
+
+    const result = listLinkedAgentThreads(
+      [
+        buildThread({ id: sourceId }),
+        linked,
+        unrelated,
+        buildThread({
+          id: ThreadId.makeUnsafe("normal"),
+          threadKind: "normal",
+          messages: linked.messages,
+        }),
+      ],
+      sourceId,
+      "channel-1",
+    );
+
+    expect(result.map((thread) => thread.id)).toEqual([ThreadId.makeUnsafe("linked")]);
   });
 });

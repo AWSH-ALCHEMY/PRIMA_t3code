@@ -50,7 +50,11 @@ import {
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
-import { resolveNextAgentEnvelope } from "../lib/agentThread";
+import {
+  getLatestAgentChannelKey,
+  listLinkedAgentThreads,
+  resolveNextAgentEnvelope,
+} from "../lib/agentThread";
 
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -1033,6 +1037,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+  const linkedAgentThreads = useMemo(() => {
+    if (!activeThread || !isAgentThread) {
+      return [];
+    }
+    const channelKey = getLatestAgentChannelKey(activeThread.messages);
+    if (!channelKey) {
+      return [];
+    }
+    return listLinkedAgentThreads(threads, activeThread.id, channelKey);
+  }, [activeThread, isAgentThread, threads]);
+  const linkedAgentProjectIds = useMemo(
+    () => new Set(linkedAgentThreads.map((thread) => thread.projectId)),
+    [linkedAgentThreads],
+  );
+  const availableAgentLinkProjects = useMemo(() => {
+    if (!activeProject) {
+      return [];
+    }
+    return projects.filter((project) => project.id !== activeProject.id);
+  }, [activeProject, projects]);
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -2940,7 +2964,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       const createdAt = new Date().toISOString();
       const threadIdForSend = activeThread.id;
-      const nextAgentEnvelope = resolveNextAgentEnvelope(threadIdForSend, activeThread.messages);
+      const fallbackEnvelope = resolveNextAgentEnvelope(threadIdForSend, activeThread.messages);
+      const channelKey =
+        getLatestAgentChannelKey(activeThread.messages) ?? fallbackEnvelope.channelKey;
+      const linkedThreads = listLinkedAgentThreads(threads, threadIdForSend, channelKey);
+      const senderLabel = activeProject?.name ?? fallbackEnvelope.senderLabel;
+      const firstLinkedProjectName =
+        linkedThreads.length > 0
+          ? projects.find((project) => project.id === linkedThreads[0]?.projectId)?.name
+          : null;
+      const fallbackRecipient =
+        fallbackEnvelope.senderLabel === senderLabel
+          ? fallbackEnvelope.recipientLabel
+          : fallbackEnvelope.senderLabel;
+      const recipientLabel = firstLinkedProjectName ?? fallbackRecipient;
+      const nextAgentEnvelope = {
+        channelKey,
+        senderLabel,
+        recipientLabel,
+      };
 
       sendInFlightRef.current = true;
       beginSendPhase("sending-turn");
@@ -2953,19 +2995,42 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerCursor(0);
       setComposerTrigger(null);
       try {
-        await api.orchestration.dispatchCommand({
-          type: "thread.message.send",
-          commandId: newCommandId(),
-          threadId: threadIdForSend,
-          message: {
-            messageId: newMessageId(),
-            role: "assistant",
-            text: trimmed,
-            agentEnvelope: nextAgentEnvelope,
-            turnId: null,
-          },
-          createdAt,
-        });
+        await Promise.all([
+          api.orchestration.dispatchCommand({
+            type: "thread.message.send",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            message: {
+              messageId: newMessageId(),
+              role: "assistant",
+              text: trimmed,
+              agentEnvelope: nextAgentEnvelope,
+              turnId: null,
+            },
+            createdAt,
+          }),
+          ...linkedThreads.map((thread) =>
+            api.orchestration.dispatchCommand({
+              type: "thread.message.send",
+              commandId: newCommandId(),
+              threadId: thread.id,
+              message: {
+                messageId: newMessageId(),
+                role: "assistant",
+                text: trimmed,
+                agentEnvelope: {
+                  channelKey,
+                  senderLabel:
+                    projects.find((project) => project.id === thread.projectId)?.name ??
+                    fallbackEnvelope.recipientLabel,
+                  recipientLabel: senderLabel,
+                },
+                turnId: null,
+              },
+              createdAt,
+            }),
+          ),
+        ]);
       } catch (error) {
         promptRef.current = trimmed;
         setPrompt(trimmed);
@@ -2988,9 +3053,127 @@ export default function ChatView({ threadId }: ChatViewProps) {
       isConnecting,
       isSendBusy,
       isServerThread,
+      activeProject,
+      projects,
       resetSendPhase,
       setPrompt,
       setThreadError,
+      threads,
+    ],
+  );
+
+  const onLinkAgentProject = useCallback(
+    async (targetProjectId: ProjectId) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !activeProject ||
+        !isServerThread ||
+        !isAgentThread ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+      const targetProject = projects.find((project) => project.id === targetProjectId);
+      if (!targetProject) {
+        return;
+      }
+      const channelKey =
+        getLatestAgentChannelKey(activeThread.messages) ?? `agent-channel:${activeThread.id}`;
+      const alreadyLinked = listLinkedAgentThreads(threads, activeThread.id, channelKey).some(
+        (thread) => thread.projectId === targetProjectId,
+      );
+      if (alreadyLinked) {
+        toastManager.add({
+          type: "info",
+          title: "Project already linked",
+          description: `${targetProject.name} is already part of this channel.`,
+        });
+        return;
+      }
+
+      const targetThreadId = newThreadId();
+      const createdAt = new Date().toISOString();
+      const sourceLabel = activeProject.name;
+      const targetLabel = targetProject.name;
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "thread.create",
+          commandId: newCommandId(),
+          threadId: targetThreadId,
+          projectId: targetProject.id,
+          title: truncateTitle(`Agent channel: ${sourceLabel} <-> ${targetLabel}`),
+          model: targetProject.model || DEFAULT_MODEL_BY_PROVIDER.codex,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_INTERACTION_MODE,
+          threadKind: "agentThread",
+          isHidden: DEFAULT_THREAD_IS_HIDDEN,
+          isLocked: true,
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        });
+        await Promise.all([
+          api.orchestration.dispatchCommand({
+            type: "thread.message.send",
+            commandId: newCommandId(),
+            threadId: activeThread.id,
+            message: {
+              messageId: newMessageId(),
+              role: "system",
+              text: `Channel linked with ${targetLabel}.`,
+              agentEnvelope: {
+                channelKey,
+                senderLabel: sourceLabel,
+                recipientLabel: targetLabel,
+              },
+              turnId: null,
+            },
+            createdAt,
+          }),
+          api.orchestration.dispatchCommand({
+            type: "thread.message.send",
+            commandId: newCommandId(),
+            threadId: targetThreadId,
+            message: {
+              messageId: newMessageId(),
+              role: "system",
+              text: `Channel linked with ${sourceLabel}.`,
+              agentEnvelope: {
+                channelKey,
+                senderLabel: targetLabel,
+                recipientLabel: sourceLabel,
+              },
+              turnId: null,
+            },
+            createdAt,
+          }),
+        ]);
+        toastManager.add({
+          type: "success",
+          title: "Agent linked",
+          description: `${targetLabel} added to channel.`,
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to link agent project",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+    },
+    [
+      activeProject,
+      activeThread,
+      isAgentThread,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      projects,
+      threads,
     ],
   );
 
@@ -4307,6 +4490,48 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         ? "Agent channel mode. Messages are sent as channel events."
                         : "Agent-managed thread."}
                     </p>
+                    <div className="flex items-center gap-2">
+                      {linkedAgentThreads.length > 0 ? (
+                        <span className="text-[10px] text-muted-foreground">
+                          {linkedAgentThreads.length + 1} projects linked
+                        </span>
+                      ) : null}
+                      <Menu>
+                        <MenuTrigger
+                          render={
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              disabled={
+                                isSendBusy ||
+                                isConnecting ||
+                                availableAgentLinkProjects.length === 0
+                              }
+                            />
+                          }
+                        >
+                          <BotIcon className="size-3" />
+                          <span>Link project</span>
+                        </MenuTrigger>
+                        <MenuPopup align="end" side="top">
+                          {availableAgentLinkProjects.length === 0 ? (
+                            <MenuItem disabled>No other projects available</MenuItem>
+                          ) : (
+                            availableAgentLinkProjects.map((project) => (
+                              <MenuItem
+                                key={project.id}
+                                disabled={linkedAgentProjectIds.has(project.id)}
+                                onClick={() => void onLinkAgentProject(project.id)}
+                              >
+                                {project.name}
+                                {linkedAgentProjectIds.has(project.id) ? " (linked)" : ""}
+                              </MenuItem>
+                            ))
+                          )}
+                        </MenuPopup>
+                      </Menu>
+                    </div>
                   </div>
                 ) : null}
 
