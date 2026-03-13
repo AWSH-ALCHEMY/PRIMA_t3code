@@ -64,3 +64,7 @@ export function listLinkedAgentThreads(
       threadHasAgentChannel(thread, channelKey),
   );
 }
+
+export function buildAgentChannelTurnPrompt(input: { senderLabel: string; text: string }): string {
+  return [`Agent channel message from ${input.senderLabel}:`, "", input.text].join("\n");
+}

@@ -51,6 +51,7 @@ import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import {
+  buildAgentChannelTurnPrompt,
   getLatestAgentChannelKey,
   listLinkedAgentThreads,
   resolveNextAgentEnvelope,
@@ -2995,42 +2996,58 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerCursor(0);
       setComposerTrigger(null);
       try {
-        await Promise.all([
-          api.orchestration.dispatchCommand({
-            type: "thread.message.send",
-            commandId: newCommandId(),
-            threadId: threadIdForSend,
-            message: {
-              messageId: newMessageId(),
-              role: "assistant",
-              text: trimmed,
-              agentEnvelope: nextAgentEnvelope,
-              turnId: null,
-            },
-            createdAt,
-          }),
-          ...linkedThreads.map((thread) =>
-            api.orchestration.dispatchCommand({
-              type: "thread.message.send",
-              commandId: newCommandId(),
-              threadId: thread.id,
-              message: {
-                messageId: newMessageId(),
-                role: "assistant",
+        await api.orchestration.dispatchCommand({
+          type: "thread.message.send",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: newMessageId(),
+            role: "assistant",
+            text: trimmed,
+            agentEnvelope: nextAgentEnvelope,
+            turnId: null,
+          },
+          createdAt,
+        });
+
+        if (linkedThreads.length > 0) {
+          const linkedDispatchResults = await Promise.allSettled(
+            linkedThreads.map((thread) => {
+              const linkedPrompt = buildAgentChannelTurnPrompt({
+                senderLabel,
                 text: trimmed,
-                agentEnvelope: {
-                  channelKey,
-                  senderLabel:
-                    projects.find((project) => project.id === thread.projectId)?.name ??
-                    fallbackEnvelope.recipientLabel,
-                  recipientLabel: senderLabel,
+              });
+              return api.orchestration.dispatchCommand({
+                type: "thread.turn.start",
+                commandId: newCommandId(),
+                threadId: thread.id,
+                message: {
+                  messageId: newMessageId(),
+                  role: "user",
+                  text: linkedPrompt,
+                  attachments: [],
                 },
-                turnId: null,
-              },
-              createdAt,
+                provider: selectedProvider,
+                model: thread.model as ModelSlug,
+                assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+                runtimeMode: thread.runtimeMode,
+                interactionMode: thread.interactionMode,
+                createdAt,
+              });
             }),
-          ),
-        ]);
+          );
+
+          const failedLinkedDispatchCount = linkedDispatchResults.filter(
+            (result) => result.status === "rejected",
+          ).length;
+          if (failedLinkedDispatchCount > 0) {
+            toastManager.add({
+              type: "warning",
+              title: "Some linked agents did not start",
+              description: `${failedLinkedDispatchCount} linked thread(s) failed to start a turn.`,
+            });
+          }
+        }
       } catch (error) {
         promptRef.current = trimmed;
         setPrompt(trimmed);
@@ -3056,6 +3073,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeProject,
       projects,
       resetSendPhase,
+      selectedProvider,
+      settings.enableAssistantStreaming,
       setPrompt,
       setThreadError,
       threads,

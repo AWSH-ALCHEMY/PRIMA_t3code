@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ThreadId } from "@t3tools/contracts";
 import {
+  buildAgentChannelTurnPrompt,
   getLatestAgentChannelKey,
   invertAgentEnvelope,
   listLinkedAgentThreads,
@@ -168,5 +169,11 @@ describe("resolveNextAgentEnvelope", () => {
     );
 
     expect(result.map((thread) => thread.id)).toEqual([ThreadId.makeUnsafe("linked")]);
+  });
+
+  it("builds a user-facing turn prompt from channel metadata", () => {
+    expect(buildAgentChannelTurnPrompt({ senderLabel: "Supervisor", text: "Do work." })).toBe(
+      "Agent channel message from Supervisor:\n\nDo work.",
+    );
   });
 });
