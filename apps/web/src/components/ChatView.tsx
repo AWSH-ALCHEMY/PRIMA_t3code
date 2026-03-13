@@ -1019,6 +1019,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
+  const isAgentManagedLockedThread =
+    activeThread?.threadKind === "agentThread" && activeThread.isLocked === true;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
@@ -2913,6 +2915,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     e?.preventDefault();
     const api = readNativeApi();
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (isAgentManagedLockedThread) return;
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -3357,6 +3360,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         !api ||
         !activeThread ||
         !isServerThread ||
+        isAgentManagedLockedThread ||
         isSendBusy ||
         isConnecting ||
         sendInFlightRef.current
@@ -3459,6 +3463,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       selectedProvider,
       setComposerDraftInteractionMode,
       setThreadError,
+      isAgentManagedLockedThread,
       settings.enableAssistantStreaming,
     ],
   );
@@ -3874,6 +3879,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [navigate, threadId],
   );
   const onRevertUserMessage = (messageId: MessageId) => {
+    if (isAgentManagedLockedThread) {
+      return;
+    }
     const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
     if (typeof targetTurnCount !== "number") {
       return;
@@ -3884,6 +3892,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     async (message: ChatMessage) => {
       const api = readNativeApi();
       if (!api || !activeThread || isConnecting || isSendBusy || sendInFlightRef.current) {
+        return;
+      }
+      if (isAgentManagedLockedThread) {
         return;
       }
 
@@ -4012,6 +4023,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeThread,
       beginSendPhase,
       interactionMode,
+      isAgentManagedLockedThread,
       isConnecting,
       isSendBusy,
       phase,
@@ -4135,8 +4147,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
               revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
               onRevertUserMessage={onRevertUserMessage}
               onResendUserMessage={onResendUserMessage}
-              isResendDisabled={isWorking || isSendBusy || isConnecting || isRevertingCheckpoint}
+              isResendDisabled={
+                isWorking ||
+                isSendBusy ||
+                isConnecting ||
+                isRevertingCheckpoint ||
+                isAgentManagedLockedThread
+              }
               isRevertingCheckpoint={isRevertingCheckpoint}
+              isThreadInputLocked={isAgentManagedLockedThread}
               onImageExpand={onExpandTimelineImage}
               markdownCwd={gitCwd ?? undefined}
               resolvedTheme={resolvedTheme}
@@ -4186,6 +4205,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
                     />
                   </div>
+                ) : null}
+                {isAgentManagedLockedThread ? (
+                  <p className="px-3 py-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                    Agent-managed thread (read-only).
+                  </p>
                 ) : null}
 
                 {/* Textarea area */}
@@ -4292,18 +4316,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     onCommandKeyDown={onComposerCommandKey}
                     onPaste={onComposerPaste}
                     placeholder={
-                      isComposerApprovalState
-                        ? (activePendingApproval?.detail ??
-                          "Resolve this approval request to continue")
-                        : activePendingProgress
-                          ? "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
-                            : phase === "disconnected"
-                              ? "Ask for follow-up changes or attach images"
-                              : "Ask anything, @tag files/folders, or use / to show available commands"
+                      isAgentManagedLockedThread
+                        ? "This agent-managed thread is read-only."
+                        : isComposerApprovalState
+                          ? (activePendingApproval?.detail ??
+                            "Resolve this approval request to continue")
+                          : activePendingProgress
+                            ? "Type your own answer, or leave this blank to use the selected option"
+                            : showPlanFollowUpPrompt && activeProposedPlan
+                              ? "Add feedback to refine the plan, or leave this blank to implement it"
+                              : phase === "disconnected"
+                                ? "Ask for follow-up changes or attach images"
+                                : "Ask anything, @tag files/folders, or use / to show available commands"
                     }
-                    disabled={isConnecting || isComposerApprovalState}
+                    disabled={isConnecting || isComposerApprovalState || isAgentManagedLockedThread}
                   />
                 </div>
 
@@ -4342,6 +4368,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         lockedProvider={lockedProvider}
                         modelOptionsByProvider={modelOptionsByProvider}
                         onProviderModelChange={onProviderModelSelect}
+                        disabled={isAgentManagedLockedThread}
                       />
 
                       {isComposerFooterCompact ? (
@@ -4359,6 +4386,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           onToggleInteractionMode={toggleInteractionMode}
                           onTogglePlanSidebar={togglePlanSidebar}
                           onToggleRuntimeMode={toggleRuntimeMode}
+                          disabled={isAgentManagedLockedThread}
                         />
                       ) : (
                         <>
@@ -4374,6 +4402,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 options={reasoningOptions}
                                 onEffortChange={onEffortSelect}
                                 onFastModeChange={onCodexFastModeChange}
+                                disabled={isAgentManagedLockedThread}
                               />
                             </>
                           ) : null}
@@ -4389,6 +4418,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             size="sm"
                             type="button"
                             onClick={toggleInteractionMode}
+                            disabled={isAgentManagedLockedThread}
                             title={
                               interactionMode === "plan"
                                 ? "Plan mode — click to return to normal chat mode"
@@ -4416,6 +4446,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 runtimeMode === "full-access" ? "approval-required" : "full-access",
                               )
                             }
+                            disabled={isAgentManagedLockedThread}
                             title={
                               runtimeMode === "full-access"
                                 ? "Full access — click to require approvals"
@@ -4521,7 +4552,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               type="submit"
                               size="sm"
                               className="h-9 rounded-full px-4 sm:h-8"
-                              disabled={isSendBusy || isConnecting}
+                              disabled={isSendBusy || isConnecting || isAgentManagedLockedThread}
                             >
                               {isConnecting || isSendBusy ? "Sending..." : "Refine"}
                             </Button>
@@ -4531,7 +4562,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 type="submit"
                                 size="sm"
                                 className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
-                                disabled={isSendBusy || isConnecting}
+                                disabled={isSendBusy || isConnecting || isAgentManagedLockedThread}
                               >
                                 {isConnecting || isSendBusy ? "Sending..." : "Implement"}
                               </Button>
@@ -4543,7 +4574,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                       variant="default"
                                       className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
                                       aria-label="Implementation actions"
-                                      disabled={isSendBusy || isConnecting}
+                                      disabled={
+                                        isSendBusy || isConnecting || isAgentManagedLockedThread
+                                      }
                                     />
                                   }
                                 >
@@ -4551,7 +4584,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 </MenuTrigger>
                                 <MenuPopup align="end" side="top">
                                   <MenuItem
-                                    disabled={isSendBusy || isConnecting}
+                                    disabled={
+                                      isSendBusy || isConnecting || isAgentManagedLockedThread
+                                    }
                                     onClick={() => void onImplementPlanInNewThread()}
                                   >
                                     Implement in new thread
@@ -4567,6 +4602,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             disabled={
                               isSendBusy ||
                               isConnecting ||
+                              isAgentManagedLockedThread ||
                               (!prompt.trim() && composerImages.length === 0)
                             }
                             aria-label={
@@ -5586,6 +5622,7 @@ interface MessagesTimelineProps {
   onResendUserMessage: (message: ChatMessage) => void;
   isResendDisabled: boolean;
   isRevertingCheckpoint: boolean;
+  isThreadInputLocked: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
@@ -5644,6 +5681,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   onResendUserMessage,
   isResendDisabled,
   isRevertingCheckpoint,
+  isThreadInputLocked,
   onImageExpand,
   markdownCwd,
   resolvedTheme,
@@ -5826,6 +5864,13 @@ const MessagesTimeline = memo(function MessagesTimeline({
       setEditingUserMessageText("");
     }
   }, [editingUserMessageId, latestUserMessageId, rows]);
+  useEffect(() => {
+    if (!isThreadInputLocked) {
+      return;
+    }
+    setEditingUserMessageId(null);
+    setEditingUserMessageText("");
+  }, [isThreadInputLocked]);
   useEffect(() => {
     if (!pendingRetryCutoff) {
       return;
@@ -6194,7 +6239,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                     {!isEditing && row.message.text && (
                       <MessageCopyButton text={row.message.text} />
                     )}
-                    {canResend && (
+                    {canResend && !isThreadInputLocked && (
                       <Button
                         type="button"
                         size="xs"
@@ -6212,7 +6257,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                         <RefreshCwIcon className="size-3" />
                       </Button>
                     )}
-                    {isLatestUserMessage && row.message.text && (
+                    {isLatestUserMessage && row.message.text && !isThreadInputLocked && (
                       <Button
                         type="button"
                         size="xs"
@@ -6227,7 +6272,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                         Edit
                       </Button>
                     )}
-                    {canRevertAgentWork && (
+                    {canRevertAgentWork && !isThreadInputLocked && (
                       <Button
                         type="button"
                         size="xs"
@@ -6660,6 +6705,7 @@ const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(pr
   onToggleInteractionMode: () => void;
   onTogglePlanSidebar: () => void;
   onToggleRuntimeMode: () => void;
+  disabled?: boolean;
 }) {
   const defaultReasoningEffort = getDefaultReasoningEffort("codex");
   const reasoningLabelByOption: Record<CodexReasoningEffort, string> = {
@@ -6678,6 +6724,7 @@ const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(pr
             variant="ghost"
             className="shrink-0 px-2 text-muted-foreground/70 hover:text-foreground/80"
             aria-label="More composer controls"
+            disabled={props.disabled}
           />
         }
       >
@@ -6691,6 +6738,7 @@ const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(pr
               <MenuRadioGroup
                 value={props.selectedEffort}
                 onValueChange={(value) => {
+                  if (props.disabled) return;
                   if (!value) return;
                   const nextEffort = props.reasoningOptions.find((option) => option === value);
                   if (!nextEffort) return;
@@ -6711,6 +6759,7 @@ const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(pr
               <MenuRadioGroup
                 value={props.selectedCodexFastModeEnabled ? "on" : "off"}
                 onValueChange={(value) => {
+                  if (props.disabled) return;
                   props.onCodexFastModeChange(value === "on");
                 }}
               >
@@ -6726,6 +6775,7 @@ const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(pr
           <MenuRadioGroup
             value={props.interactionMode}
             onValueChange={(value) => {
+              if (props.disabled) return;
               if (!value || value === props.interactionMode) return;
               props.onToggleInteractionMode();
             }}
@@ -6740,6 +6790,7 @@ const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(pr
           <MenuRadioGroup
             value={props.runtimeMode}
             onValueChange={(value) => {
+              if (props.disabled) return;
               if (!value || value === props.runtimeMode) return;
               props.onToggleRuntimeMode();
             }}
@@ -6751,7 +6802,7 @@ const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(pr
         {props.activePlan ? (
           <>
             <MenuDivider />
-            <MenuItem onClick={props.onTogglePlanSidebar}>
+            <MenuItem onClick={props.onTogglePlanSidebar} disabled={props.disabled}>
               <ListTodoIcon className="size-4 shrink-0" />
               {props.planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"}
             </MenuItem>
@@ -6768,6 +6819,7 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
   options: ReadonlyArray<CodexReasoningEffort>;
   onEffortChange: (effort: CodexReasoningEffort) => void;
   onFastModeChange: (enabled: boolean) => void;
+  disabled?: boolean;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const defaultReasoningEffort = getDefaultReasoningEffort("codex");
@@ -6797,6 +6849,7 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
             size="sm"
             variant="ghost"
             className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+            disabled={props.disabled}
           />
         }
       >
@@ -6809,6 +6862,7 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
           <MenuRadioGroup
             value={props.effort}
             onValueChange={(value) => {
+              if (props.disabled) return;
               if (!value) return;
               const nextEffort = props.options.find((option) => option === value);
               if (!nextEffort) return;
@@ -6829,6 +6883,7 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
           <MenuRadioGroup
             value={props.fastModeEnabled ? "on" : "off"}
             onValueChange={(value) => {
+              if (props.disabled) return;
               props.onFastModeChange(value === "on");
             }}
           >

@@ -1091,4 +1091,36 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
+
+  it("renders locked agent threads as read-only and disables composer send controls", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-agent-lock" as MessageId,
+      targetText: "agent lock",
+    });
+    const lockedSnapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: baseSnapshot.threads.map((thread) => ({
+        ...thread,
+        threadKind: "agentThread",
+        isLocked: true,
+      })),
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: lockedSnapshot,
+    });
+
+    try {
+      await expect.element(page.getByText("Agent-managed thread (read-only).")).toBeInTheDocument();
+
+      const composerEditor = page.getByTestId("composer-editor");
+      await expect.element(composerEditor).toBeInTheDocument();
+
+      const sendButton = page.getByRole("button", { name: "Send message" });
+      await expect.element(sendButton).toBeDisabled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 });
