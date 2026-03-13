@@ -448,4 +448,147 @@ describe("decider project scripts", () => {
       },
     });
   });
+
+  it("rejects creating agentThread with parentThreadId", async () => {
+    const now = new Date().toISOString();
+    const readModel = await Effect.runPromise(
+      projectEvent(createEmptyReadModel(now), {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-agent-parent"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-1"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-agent-parent"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-agent-parent"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModel: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.create",
+            commandId: CommandId.makeUnsafe("cmd-thread-create-agent-parent"),
+            threadId: ThreadId.makeUnsafe("thread-agent"),
+            projectId: asProjectId("project-1"),
+            parentThreadId: ThreadId.makeUnsafe("thread-source"),
+            threadKind: "agentThread",
+            title: "Agent child",
+            model: "gpt-5-codex",
+            runtimeMode: "full-access",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            isHidden: false,
+            isLocked: true,
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow("fresh top-level threads");
+  });
+
+  it("rejects converting non-empty thread to agentThread", async () => {
+    const now = new Date().toISOString();
+    const withProject = await Effect.runPromise(
+      projectEvent(createEmptyReadModel(now), {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-agent-convert"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-1"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-agent-convert"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-agent-convert"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModel: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const withThread = await Effect.runPromise(
+      projectEvent(withProject, {
+        sequence: 2,
+        eventId: asEventId("evt-thread-create-agent-convert"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-1"),
+        type: "thread.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-thread-create-agent-convert"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-thread-create-agent-convert"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          projectId: asProjectId("project-1"),
+          title: "Thread",
+          model: "gpt-5-codex",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const readModel = await Effect.runPromise(
+      projectEvent(withThread, {
+        sequence: 3,
+        eventId: asEventId("evt-thread-message-agent-convert"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-1"),
+        type: "thread.message-sent",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-thread-message-agent-convert"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-thread-message-agent-convert"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          messageId: asMessageId("message-1"),
+          role: "user",
+          text: "hello",
+          turnId: null,
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.meta.update",
+            commandId: CommandId.makeUnsafe("cmd-thread-meta-agent-convert"),
+            threadId: ThreadId.makeUnsafe("thread-1"),
+            threadKind: "agentThread",
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow("Create a new agent thread instead");
+  });
 });

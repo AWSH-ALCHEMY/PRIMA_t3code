@@ -16,6 +16,11 @@ import {
 
 const nowIso = () => new Date().toISOString();
 const DEFAULT_ASSISTANT_DELIVERY_MODE = "buffered" as const;
+const hasThreadConversationState = (thread: OrchestrationReadModel["threads"][number]): boolean =>
+  thread.messages.length > 0 ||
+  thread.proposedPlans.length > 0 ||
+  thread.activities.length > 0 ||
+  thread.checkpoints.length > 0;
 
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
   eventId: crypto.randomUUID() as OrchestrationEvent["eventId"],
@@ -140,6 +145,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
+      if (command.threadKind === "agentThread" && command.parentThreadId !== undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail:
+            "Agent threads must be created as fresh top-level threads (parentThreadId is not allowed).",
+        });
+      }
       yield* requireThreadAbsent({
         readModel,
         command,
@@ -374,11 +386,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.meta.update": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      if (
+        command.threadKind === "agentThread" &&
+        thread.threadKind !== "agentThread" &&
+        hasThreadConversationState(thread)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail:
+            "Cannot convert a non-empty thread into agentThread. Create a new agent thread instead.",
+        });
+      }
       const occurredAt = nowIso();
       return {
         ...withEventBase({
