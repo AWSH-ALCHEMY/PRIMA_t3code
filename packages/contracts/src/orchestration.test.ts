@@ -6,9 +6,11 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   OrchestrationGetTurnDiffInput,
+  OrchestrationMessage,
   OrchestrationSession,
   ProjectCreateCommand,
   ThreadCreateCommand,
+  ThreadMessageSentPayload,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -25,6 +27,8 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 );
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
+const decodeThreadMessageSentPayload = Schema.decodeUnknownEffect(ThreadMessageSentPayload);
+const decodeOrchestrationMessage = Schema.decodeUnknownEffect(OrchestrationMessage);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -241,5 +245,48 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+  }),
+);
+
+it.effect("decodes thread.message-sent payload with agent envelope metadata", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadMessageSentPayload({
+      threadId: "thread-1",
+      messageId: "msg-1",
+      role: "assistant",
+      text: "cross-agent handoff complete",
+      agentEnvelope: {
+        channelKey: "research-handoff",
+        senderLabel: "Supervisor",
+        recipientLabel: "Research",
+      },
+      turnId: "turn-1",
+      streaming: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.agentEnvelope?.channelKey, "research-handoff");
+    assert.strictEqual(parsed.agentEnvelope?.senderLabel, "Supervisor");
+    assert.strictEqual(parsed.agentEnvelope?.recipientLabel, "Research");
+  }),
+);
+
+it.effect("decodes orchestration message with optional agent envelope metadata", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationMessage({
+      id: "msg-1",
+      role: "assistant",
+      text: "done",
+      agentEnvelope: {
+        channelKey: "research-handoff",
+        senderLabel: "Supervisor",
+        recipientLabel: "Research",
+      },
+      turnId: "turn-1",
+      streaming: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.agentEnvelope?.channelKey, "research-handoff");
   }),
 );

@@ -103,4 +103,49 @@ layer("ProjectionThreadMessageRepository", (it) => {
       assert.deepEqual(rows[0]?.attachments, []);
     }),
   );
+
+  it.effect("preserves existing agent envelope when upsert omits agentEnvelope", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.makeUnsafe("thread-preserve-agent-envelope");
+      const messageId = MessageId.makeUnsafe("message-preserve-agent-envelope");
+      const createdAt = "2026-03-12T21:00:00.000Z";
+
+      yield* repository.upsert({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "assistant",
+        text: "initial",
+        agentEnvelope: {
+          channelKey: "supervisor-research",
+          senderLabel: "Supervisor",
+          recipientLabel: "Research Agent",
+        },
+        isStreaming: false,
+        createdAt,
+        updatedAt: "2026-03-12T21:00:01.000Z",
+      });
+
+      yield* repository.upsert({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "assistant",
+        text: "updated",
+        isStreaming: false,
+        createdAt,
+        updatedAt: "2026-03-12T21:00:02.000Z",
+      });
+
+      const rows = yield* repository.listByThreadId({ threadId });
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.text, "updated");
+      assert.deepEqual(rows[0]?.agentEnvelope, {
+        channelKey: "supervisor-research",
+        senderLabel: "Supervisor",
+        recipientLabel: "Research Agent",
+      });
+    }),
+  );
 });

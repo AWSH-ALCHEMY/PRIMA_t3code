@@ -3,6 +3,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  OrchestrationAgentEnvelope,
   OrchestrationCheckpointFile,
   OrchestrationReadModel,
   ProjectScript,
@@ -50,6 +51,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    agentEnvelope: Schema.NullOr(Schema.fromJsonString(OrchestrationAgentEnvelope)),
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
@@ -191,6 +193,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          agent_envelope_json AS "agentEnvelope",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -429,6 +432,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               role: row.role,
               text: row.text,
               ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+              ...(row.agentEnvelope !== null ? { agentEnvelope: row.agentEnvelope } : {}),
               turnId: row.turnId,
               streaming: row.isStreaming === 1,
               createdAt: row.createdAt,

@@ -599,6 +599,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
                   attachments: event.payload.attachments,
                 })
               : existingMessage?.attachments;
+          const nextAgentEnvelope = event.payload.agentEnvelope ?? existingMessage?.agentEnvelope;
           yield* projectionThreadMessageRepository.upsert({
             messageId: event.payload.messageId,
             threadId: event.payload.threadId,
@@ -606,6 +607,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             role: event.payload.role,
             text: nextText,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
+            ...(nextAgentEnvelope !== undefined ? { agentEnvelope: nextAgentEnvelope } : {}),
             isStreaming: event.payload.streaming,
             createdAt: existingMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,

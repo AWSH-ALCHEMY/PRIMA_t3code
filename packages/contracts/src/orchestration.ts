@@ -148,11 +148,19 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
+export const OrchestrationAgentEnvelope = Schema.Struct({
+  channelKey: TrimmedNonEmptyString,
+  senderLabel: TrimmedNonEmptyString,
+  recipientLabel: TrimmedNonEmptyString,
+});
+export type OrchestrationAgentEnvelope = typeof OrchestrationAgentEnvelope.Type;
+
 export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  agentEnvelope: Schema.optional(OrchestrationAgentEnvelope),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
@@ -701,6 +709,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  agentEnvelope: Schema.optional(OrchestrationAgentEnvelope),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,

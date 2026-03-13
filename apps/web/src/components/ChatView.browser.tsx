@@ -137,11 +137,21 @@ function createUserMessage(options: {
   };
 }
 
-function createAssistantMessage(options: { id: MessageId; text: string; offsetSeconds: number }) {
+function createAssistantMessage(options: {
+  id: MessageId;
+  text: string;
+  offsetSeconds: number;
+  agentEnvelope?: {
+    channelKey: string;
+    senderLabel: string;
+    recipientLabel: string;
+  };
+}) {
   return {
     id: options.id,
     role: "assistant" as const,
     text: options.text,
+    ...(options.agentEnvelope ? { agentEnvelope: options.agentEnvelope } : {}),
     turnId: null,
     streaming: false,
     createdAt: isoAt(options.offsetSeconds),
@@ -1119,6 +1129,48 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const sendButton = page.getByRole("button", { name: "Send message" });
       await expect.element(sendButton).toBeDisabled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders agent envelope metadata badges for assistant messages", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-agent-envelope" as MessageId,
+      targetText: "hello",
+    });
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: baseSnapshot.threads.map((thread) => {
+        let envelopeAssigned = false;
+        const messages = thread.messages.toReversed().map((message) => {
+          if (!envelopeAssigned && message.role === "assistant") {
+            envelopeAssigned = true;
+            return {
+              ...message,
+              agentEnvelope: {
+                channelKey: "supervisor-research",
+                senderLabel: "Supervisor",
+                recipientLabel: "Research Agent",
+              },
+            };
+          }
+          return message;
+        });
+        return {
+          ...thread,
+          messages: messages.toReversed(),
+        };
+      }),
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      await expect.element(page.getByText("Supervisor -> Research Agent")).toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }

@@ -1,6 +1,7 @@
 import { DEFAULT_THREAD_KIND as ContractDefaultThreadKind } from "@t3tools/contracts";
 import type {
   ThreadKind,
+  OrchestrationAgentEnvelope,
   OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
@@ -49,6 +50,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   text: string;
   attachments?: ChatAttachment[];
+  agentEnvelope?: OrchestrationAgentEnvelope;
   turnId?: TurnId | null;
   createdAt: string;
   completedAt?: string | undefined;

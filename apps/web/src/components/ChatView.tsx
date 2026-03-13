@@ -329,6 +329,13 @@ function formatTurnUsageMetaParts(metrics: TurnUsageMetrics): string[] {
   return formatted.split(" • ");
 }
 
+function formatAgentEnvelopeBadgePart(message: ChatMessage): string | null {
+  if (!message.agentEnvelope) {
+    return null;
+  }
+  return `${message.agentEnvelope.senderLabel} -> ${message.agentEnvelope.recipientLabel}`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -6140,6 +6147,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
           const isLatestUserMessage = latestUserMessageId === row.message.id;
           const isEditing = editingUserMessageId === row.message.id;
           const trimmedEditedText = editingUserMessageText.trim();
+          const agentEnvelopePart = formatAgentEnvelopeBadgePart(row.message);
           return (
             <div className="flex justify-end">
               <div
@@ -6285,9 +6293,16 @@ const MessagesTimeline = memo(function MessagesTimeline({
                       </Button>
                     )}
                   </div>
-                  <p className="text-right text-[10px] text-muted-foreground/30">
-                    {formatTimestamp(row.message.createdAt)}
-                  </p>
+                  <div className="flex items-center gap-1.5">
+                    {agentEnvelopePart && (
+                      <span className="max-w-[220px] truncate rounded-md border border-border/60 bg-muted/25 px-1.5 py-1 text-[10px] leading-none text-muted-foreground/75">
+                        {agentEnvelopePart}
+                      </span>
+                    )}
+                    <p className="text-right text-[10px] text-muted-foreground/30">
+                      {formatTimestamp(row.message.createdAt)}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -6314,7 +6329,12 @@ const MessagesTimeline = memo(function MessagesTimeline({
             responseModel,
           );
           const usageParts = responseUsage ? formatTurnUsageMetaParts(responseUsage) : [];
-          const footerParts = [...metaParts, ...usageParts];
+          const agentEnvelopePart = formatAgentEnvelopeBadgePart(row.message);
+          const footerParts = [
+            ...(agentEnvelopePart ? [agentEnvelopePart] : []),
+            ...metaParts,
+            ...usageParts,
+          ];
           const footerBadges = (() => {
             const occurrenceByPart = new Map<string, number>();
             return footerParts.map((part) => {
